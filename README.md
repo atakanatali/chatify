@@ -29,6 +29,9 @@ Chatify is organized around a modular monolith layout with a dedicated host, a s
 
 Module boundaries are enforced through project references: the domain layer only depends on `BuildingBlocks` (when needed), the application layer depends on domain and shared kernel, infrastructure depends on application/domain/shared kernel, and the host only depends on application/infrastructure/shared kernel.
 
+### Dependency Overview
+Chatify manages baseline dependencies centrally in `Directory.Packages.props` to keep versions consistent. Highlights include SignalR for realtime chat, Serilog for logging (console + Elastic), Kafka/Redis/Cassandra clients for infrastructure integrations, and xUnit + FluentAssertions for testing.
+
 ## Getting Started
 Placeholders only. Future steps will include build and run instructions for Chatify.
 
