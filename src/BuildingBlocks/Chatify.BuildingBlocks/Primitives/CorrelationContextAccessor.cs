@@ -106,7 +106,7 @@ public sealed class CorrelationContextAccessor : ICorrelationContextAccessor
     }
 
     /// <summary>
-    /// Gets the correlation ID for the current async execution context.
+    /// Gets or sets the correlation ID for the current async execution context.
     /// </summary>
     /// <value>
     /// A string containing the correlation ID, or <c>null</c> if no correlation ID has been set.
@@ -126,28 +126,13 @@ public sealed class CorrelationContextAccessor : ICorrelationContextAccessor
     /// The value is automatically preserved across await points, so code running after an await
     /// will see the same correlation ID as before the await, unless explicitly changed.
     /// </para>
-    /// </remarks>
-    public string? CorrelationId
-    {
-        get => _asyncLocalCorrelationId.Value;
-    }
-
-    /// <summary>
-    /// Sets the correlation ID for the current async execution context.
-    /// </summary>
-    /// <value>
-    /// The correlation ID to associate with the current async context.
-    /// </value>
-    /// <remarks>
     /// <para>
     /// The setter stores the provided value in <see cref="System.Threading.AsyncLocal{T}"/>
     /// storage for the current async context. This operation affects only the current context;
     /// parent contexts and concurrent contexts are not modified.
     /// </para>
     /// <para>
-    /// Setting to <c>null</c> clears the correlation ID from the current context, which
-    /// may be useful in testing or when handling operations that should not be correlated
-    /// with the current request.
+    /// Setting to <c>null</c> clears the correlation ID from the current context.
     /// </para>
     /// <para>
     /// <b>Important:</b> Changes made to the correlation ID in a child context (such as
@@ -155,14 +140,10 @@ public sealed class CorrelationContextAccessor : ICorrelationContextAccessor
     /// When the child context completes, the parent context retains its original value.
     /// This is the intended behavior of <see cref="System.Threading.AsyncLocal{T}"/>.
     /// </para>
-    /// <para>
-    /// This setter is thread-safe for operations within the same async context. Concurrent
-    /// access from different async contexts operates on separate storage, so no race
-    /// conditions can occur.
-    /// </para>
     /// </remarks>
-    string? ICorrelationContextAccessor.CorrelationId
+    public string? CorrelationId
     {
+        get => _asyncLocalCorrelationId.Value;
         set => _asyncLocalCorrelationId.Value = value;
     }
 }
