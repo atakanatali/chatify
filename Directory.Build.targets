@@ -1,0 +1,5 @@
+<Project>
+  <Target Name="ChatifyVerifyBuild" BeforeTargets="Build">
+    <Message Text="Chatify build rules applied." Importance="high" />
+  </Target>
+</Project>
