@@ -1,0 +1,54 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.ChatApi", "src/Hosts/Chatify.ChatApi/Chatify.ChatApi.csproj", "{31C6D1DA-2207-440F-BBCB-2E95431C5DB9}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.BuildingBlocks", "src/BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj", "{D4F16BEA-8187-4D4D-BD2C-BE0D137D8028}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.Domain", "src/Modules/Chat/Chatify.Chat.Domain/Chatify.Chat.Domain.csproj", "{1B21786F-A2FE-4DF2-AF38-19F860D6B524}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.Application", "src/Modules/Chat/Chatify.Chat.Application/Chatify.Chat.Application.csproj", "{F655A23B-C1FC-49FF-8570-A439BD5B6115}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.Infrastructure", "src/Modules/Chat/Chatify.Chat.Infrastructure/Chatify.Chat.Infrastructure.csproj", "{35ACAA3E-CE60-4C38-A4C5-C5F9DDF2A658}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.UnitTests", "tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj", "{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.ChatApi.IntegrationTests", "tests/Chatify.ChatApi.IntegrationTests/Chatify.ChatApi.IntegrationTests.csproj", "{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{31C6D1DA-2207-440F-BBCB-2E95431C5DB9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{31C6D1DA-2207-440F-BBCB-2E95431C5DB9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{31C6D1DA-2207-440F-BBCB-2E95431C5DB9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{31C6D1DA-2207-440F-BBCB-2E95431C5DB9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4F16BEA-8187-4D4D-BD2C-BE0D137D8028}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4F16BEA-8187-4D4D-BD2C-BE0D137D8028}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4F16BEA-8187-4D4D-BD2C-BE0D137D8028}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4F16BEA-8187-4D4D-BD2C-BE0D137D8028}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1B21786F-A2FE-4DF2-AF38-19F860D6B524}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B21786F-A2FE-4DF2-AF38-19F860D6B524}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B21786F-A2FE-4DF2-AF38-19F860D6B524}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B21786F-A2FE-4DF2-AF38-19F860D6B524}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F655A23B-C1FC-49FF-8570-A439BD5B6115}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F655A23B-C1FC-49FF-8570-A439BD5B6115}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F655A23B-C1FC-49FF-8570-A439BD5B6115}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F655A23B-C1FC-49FF-8570-A439BD5B6115}.Release|Any CPU.Build.0 = Release|Any CPU
+		{35ACAA3E-CE60-4C38-A4C5-C5F9DDF2A658}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{35ACAA3E-CE60-4C38-A4C5-C5F9DDF2A658}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{35ACAA3E-CE60-4C38-A4C5-C5F9DDF2A658}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{35ACAA3E-CE60-4C38-A4C5-C5F9DDF2A658}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
