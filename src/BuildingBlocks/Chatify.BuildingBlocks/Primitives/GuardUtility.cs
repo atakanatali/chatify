@@ -68,7 +68,7 @@ public static class GuardUtility
     /// <remarks>
     /// <para>
     /// This method only checks for <c>null</c> or empty strings. Strings containing only whitespace
-    /// are considered valid. Use <see cref="IsNullOrWhiteSpace"/> validation if whitespace-only
+    /// are considered valid. Use <see cref="string.IsNullOrWhiteSpace(string)"/> validation if whitespace-only
     /// strings should be rejected.
     /// </para>
     /// <para>
@@ -98,7 +98,7 @@ public static class GuardUtility
     /// <remarks>
     /// This method validates any collection implementing <see cref="IEnumerable{T}"/>, including arrays,
     /// lists, and other collection types. The enumeration is not performed; only the count is checked
-    /// for efficiency. LINQ's <see cref="System.Linq.Enumerable.Any{TSource}(System.Collections.Generic.IEnumerable{T})"/>
+    /// for efficiency. LINQ's <see cref="System.Linq.Enumerable.Any{TSource}"/>
     /// is used for the empty check, which may have performance implications for certain collection types.
     /// </remarks>
     public static void NotEmpty<T>(
