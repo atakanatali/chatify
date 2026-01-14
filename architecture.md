@@ -200,3 +200,270 @@ When producing messages to Kafka:
 - Use `(ScopeType, ScopeId)` as the partition key to ensure all messages for a scope land in the same partition.
 - Kafka's per-partition ordering guarantees the strict sequencing required by the domain.
 - Different scopes can be distributed across partitions for parallel consumption.
+
+## Chat Application - Use Cases and Ports
+
+### Overview
+The Chat Application layer implements use cases through Commands and Queries following the CQRS pattern. It defines ports (interfaces) for infrastructure concerns and orchestrates business workflows while depending only on the Domain layer and BuildingBlocks.
+
+### Application Layer Structure
+
+```
+Chatify.Chat.Application/
+├── Commands/
+│   └── SendChatMessage/
+│       ├── SendChatMessageCommand.cs
+│       └── SendChatMessageCommandHandler.cs
+├── Common/
+│   ├── Constants/
+│   │   └── ChatifyConstants.cs
+│   └── Errors/
+│       └── ServiceError.cs
+├── Dtos/
+│   ├── ChatSendRequestDto.cs
+│   ├── ChatEventDto.cs
+│   └── EnrichedChatEventDto.cs
+├── Ports/
+│   ├── IChatEventProducerService.cs
+│   ├── IChatHistoryRepository.cs
+│   ├── IPresenceService.cs
+│   ├── IRateLimitService.cs
+│   └── IPodIdentityService.cs
+└── DependencyInjection/
+    └── ServiceCollectionExtensions.cs
+```
+
+### Constants and Error Handling
+
+#### ChatifyConstants
+Centralizes all magic strings and numeric values to improve maintainability:
+
+```csharp
+public static class ChatifyConstants
+{
+    public static class RateLimit
+    {
+        public const string SendChatMessageKeyPrefix = "user-{0}:send-message";
+        public const int SendChatMessageThreshold = 100;
+        public const int SendChatMessageWindowSeconds = 60;
+        public static string SendChatMessageKey(string userId) { ... }
+    }
+
+    public static class ErrorCodes
+    {
+        public const string ValidationError = "VALIDATION_ERROR";
+        public const string RateLimitExceeded = "RATE_LIMIT_EXCEEDED";
+        public const string ConfigurationError = "CONFIGURATION_ERROR";
+        public const string EventProductionFailed = "EVENT_PRODUCTION_FAILED";
+    }
+
+    public static class LogMessages
+    {
+        public const string ProcessingSendChatMessage = "Processing SendChatMessage command for sender {SenderId}...";
+        public const string DomainValidationFailed = "Domain validation failed for message from {SenderId}...";
+        // ... more log message templates
+    }
+}
+```
+
+#### ServiceError
+Provides factory methods for creating typed errors without magic strings:
+
+```csharp
+public static class ServiceError
+{
+    public static class Chat
+    {
+        public static ErrorEntity ValidationFailed(string message, Exception? exception = null);
+        public static ErrorEntity RateLimitExceeded(string userId, Exception? exception = null);
+    }
+
+    public static class System
+    {
+        public static ErrorEntity ConfigurationError(string message, Exception? exception = null);
+        public static ErrorEntity ConfigurationError(Exception? exception = null);
+    }
+
+    public static class Messaging
+    {
+        public static ErrorEntity EventProductionFailed(string message, Exception? exception = null);
+        public static ErrorEntity EventProductionFailed(Exception? exception = null);
+    }
+}
+```
+
+### Data Transfer Objects
+
+#### ChatSendRequestDto
+Represents a request to send a chat message.
+```csharp
+public record ChatSendRequestDto
+{
+    ChatScopeTypeEnum ScopeType;  // Channel or DirectMessage
+    string ScopeId;               // Target conversation identifier
+    string Text;                  // Message content (0-4096 chars)
+}
+```
+
+#### ChatEventDto
+Represents a chat event that flows through the system.
+```csharp
+public record ChatEventDto
+{
+    Guid MessageId;               // Unique event identifier
+    ChatScopeTypeEnum ScopeType;  // Channel or DirectMessage
+    string ScopeId;               // Scope for ordering
+    string SenderId;              // Who sent the message
+    string Text;                  // Message content
+    DateTime CreatedAtUtc;        // Ordering timestamp
+    string OriginPodId;           // Pod that created the event
+}
+```
+
+#### EnrichedChatEventDto
+Extends ChatEventDto with broker metadata (provider-agnostic).
+```csharp
+public record EnrichedChatEventDto
+{
+    ChatEventDto ChatEvent;       // Base event data
+    int Partition;                // Broker partition where event was written
+    long Offset;                  // Broker offset within the partition
+}
+```
+
+### Ports (Interfaces)
+
+The Application layer defines ports for infrastructure concerns. These interfaces are implemented in the Infrastructure layer.
+
+#### IChatEventProducerService
+Produces chat events to the messaging system (Kafka, Redpanda, etc.).
+```csharp
+interface IChatEventProducerService
+{
+    Task<(int Partition, long Offset)> ProduceAsync(
+        ChatEventDto chatEvent,
+        CancellationToken cancellationToken);
+}
+```
+
+#### IChatHistoryRepository
+Persists and retrieves chat message history.
+```csharp
+interface IChatHistoryRepository
+{
+    Task AppendAsync(ChatEventDto chatEvent, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ChatEventDto>> QueryByScopeAsync(
+        ChatScopeTypeEnum scopeType,
+        string scopeId,
+        DateTime? fromUtc,
+        DateTime? toUtc,
+        int limit,
+        CancellationToken cancellationToken);
+}
+```
+
+#### IPresenceService
+Manages user online/offline presence and connections.
+```csharp
+interface IPresenceService
+{
+    Task SetOnlineAsync(string userId, string connectionId, CancellationToken cancellationToken);
+    Task SetOfflineAsync(string userId, string connectionId, CancellationToken cancellationToken);
+    Task HeartbeatAsync(string userId, string connectionId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<string>> GetConnectionsAsync(string userId, CancellationToken cancellationToken);
+}
+```
+
+#### IRateLimitService
+Enforces rate limits to prevent abuse.
+```csharp
+interface IRateLimitService
+{
+    Task<ResultEntity> CheckAndIncrementAsync(
+        string key,
+        int threshold,
+        int windowSeconds,
+        CancellationToken cancellationToken);
+}
+```
+
+#### IPodIdentityService
+Provides pod identity for tracking and debugging.
+```csharp
+interface IPodIdentityService
+{
+    string PodId { get; }
+}
+```
+
+### Command Handler Flow
+
+The `SendChatMessageCommandHandler` orchestrates the message sending workflow:
+
+```
+┌─────────────────┐
+│ API Layer       │
+│ (Creates        │
+│  Command)       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────┐
+│ SendChatMessageCommandHandler.HandleAsync()            │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ 1. Validate Domain Policy                               │
+│    └─> ChatDomainPolicy.Validate*()                    │
+│        └─> Return ServiceError.Chat.ValidationFailed   │
+│                                                         │
+│ 2. Check Rate Limit                                     │
+│    └─> IRateLimitService.CheckAndIncrementAsync()      │
+│        └─> Return ServiceError.Chat.RateLimitExceeded  │
+│                                                         │
+│ 3. Create ChatEventDto                                  │
+│    └─> Generate MessageId (Guid)                       │
+│    └─> Get current time (IClockService)                │
+│    └─> Get origin pod ID (IPodIdentityService)         │
+│                                                         │
+│ 4. Produce Event to Messaging System                   │
+│    └─> IChatEventProducerService.ProduceAsync()        │
+│        └─> Returns (partition, offset)                 │
+│                                                         │
+│ 5. Return EnrichedChatEventDto                          │
+│    └─> Contains ChatEvent + broker metadata            │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│ API Layer       │
+│ (Returns        │
+│  Result)        │
+└─────────────────┘
+```
+
+### Error Handling Strategy
+
+The Application layer uses the `ResultEntity<T>` pattern with `ServiceError` factory methods:
+
+| Error Type | ServiceError Method | Error Code | Handling |
+|------------|---------------------|------------|----------|
+| Validation failed | `ServiceError.Chat.ValidationFailed()` | `VALIDATION_ERROR` | Domain policy validation failure, returned to client |
+| Rate limit exceeded | `ServiceError.Chat.RateLimitExceeded()` | `RATE_LIMIT_EXCEEDED` | User exceeded send threshold, retry after delay |
+| Configuration error | `ServiceError.System.ConfigurationError()` | `CONFIGURATION_ERROR` | Pod ID validation failed, system misconfiguration |
+| Event production failed | `ServiceError.Messaging.EventProductionFailed()` | `EVENT_PRODUCTION_FAILED` | Message broker unavailable, retry |
+
+### Dependency Registration
+
+The Application layer provides an extension method for service registration:
+
+```csharp
+// In Program.cs
+builder.Services.AddChatifyChatApplication();
+```
+
+This registers:
+- All command handlers (scoped lifetime)
+- Application services (none currently, will be added as needed)
+
+Infrastructure services are registered separately via the Infrastructure layer's extension methods (e.g., `AddChatifyChatKafka`, `AddChatifyChatRedis`).
