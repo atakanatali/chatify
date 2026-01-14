@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chatify
+  labels:
+    app.kubernetes.io/name: Chatify
+    app.kubernetes.io/part-of: Chatify
