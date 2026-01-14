@@ -120,3 +120,83 @@ Placeholders only. Future steps will cover deployment and runtime considerations
 
 ## Appendix
 Placeholders only.
+
+## Chat Domain - Ordering Scope Rules
+
+### Overview
+Chatify enforces strict message ordering within each scope to maintain conversation integrity. The ordering system ensures all participants see messages in the exact same chronological sequence, preventing confusion and preserving context.
+
+### Scope Types
+
+#### Channel Scope
+- **Definition**: A multi-participant chat where messages are broadcast to all members.
+- **ScopeId Format**: Channel name, UUID, or other stable identifier.
+- **Use Cases**: Team communication, topic-based discussions, public group conversations.
+- **Ordering**: Messages with `ScopeType = Channel` and the same `ScopeId` are ordered together.
+
+#### DirectMessage Scope
+- **Definition**: A one-to-one or small group conversation between specific users.
+- **ScopeId Format**: Composite key derived from participant IDs or conversation UUID.
+- **Use Cases**: Private conversations, direct user-to-user messaging.
+- **Ordering**: Messages with `ScopeType = DirectMessage` and the same `ScopeId` are ordered together.
+
+### Message Ordering Guarantees
+
+1. **Scope-Based Ordering**: Messages are ordered strictly by `CreatedAtUtc` timestamp within each unique `(ScopeType, ScopeId)` combination.
+2. **Independent Processing**: Different scopes (different ScopeType OR different ScopeId) can be processed in parallel without blocking.
+3. **Total Ordering**: Within a single scope, messages form a total order. If two messages have identical `CreatedAtUtc` values, `MessageId` serves as the tiebreaker.
+
+### ChatMessageEntity Structure
+
+```csharp
+public record ChatMessageEntity
+{
+    Guid MessageId;           // Unique identifier
+    ChatScopeTypeEnum ScopeType;  // Channel or DirectMessage
+    string ScopeId;           // Scope identifier
+    string SenderId;          // Who sent the message
+    string Text;              // Message content (max 4096 chars)
+    DateTime CreatedAtUtc;    // Ordering timestamp
+    string OriginPodId;       // Pod that created the message
+}
+```
+
+### Domain Policy Validation
+
+The `ChatDomainPolicy` static class enforces these invariants:
+
+| Property | Validation Rule | Constant |
+|----------|----------------|----------|
+| `ScopeId` | 1-256 characters, not null/whitespace | `MaxScopeIdLength = 256` |
+| `SenderId` | 1-256 characters, not null/whitespace | `MaxSenderIdLength = 256` |
+| `Text` | 0-4096 characters, not null | `MaxTextLength = 4096` |
+| `OriginPodId` | 1-256 characters, not null/whitespace | `MaxOriginPodIdLength = 256` |
+
+### Usage Pattern
+
+```csharp
+// Validate before creating
+ChatDomainPolicy.ValidateScopeId("general");
+ChatDomainPolicy.ValidateSenderId("user-123");
+ChatDomainPolicy.ValidateText("Hello, world!");
+ChatDomainPolicy.ValidateOriginPodId("chat-api-7d9f4c5b6d-abc12");
+
+// Create the message
+var message = new ChatMessageEntity
+{
+    MessageId = Guid.NewGuid(),
+    ScopeType = ChatScopeTypeEnum.Channel,
+    ScopeId = "general",
+    SenderId = "user-123",
+    Text = "Hello, world!",
+    CreatedAtUtc = DateTime.UtcNow,
+    OriginPodId = "chat-api-7d9f4c5b6d-abc12"
+};
+```
+
+### Kafka Ordering Implications
+
+When producing messages to Kafka:
+- Use `(ScopeType, ScopeId)` as the partition key to ensure all messages for a scope land in the same partition.
+- Kafka's per-partition ordering guarantees the strict sequencing required by the domain.
+- Different scopes can be distributed across partitions for parallel consumption.
