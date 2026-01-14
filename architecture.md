@@ -39,13 +39,23 @@ The Chat module is split using Clean Architecture boundaries. Dependency rules a
 This structure keeps domain logic isolated, pushes orchestration to the application layer, and encapsulates infrastructure concerns behind the application boundary.
 
 ## Cross-Cutting Concerns
-Placeholders only. Future steps will outline logging, metrics, configuration, and shared libraries.
+Chatify centralizes foundational dependencies in `Directory.Packages.props` to ensure consistent package versions across modules. The baseline stack includes:
+
+- **Real-time messaging**: SignalR (`Microsoft.AspNetCore.SignalR`, JSON protocol) for websocket-based chat hubs.
+- **Logging/observability**: Serilog with console and Elastic sinks plus enrichers for environment/process/thread/span context.
+- **Resilience & configuration**: `Polly` for retries and `Microsoft.Extensions.Options.ConfigurationExtensions` for typed settings.
+- **Validation**: `FluentValidation` for request and domain rules.
 
 ## Infrastructure
-Placeholders only. Future steps will document Kafka, Redis, Scylla, and Elastic integration.
+The infrastructure layer is expected to integrate with:
+
+- **Kafka** (`Confluent.Kafka`) for event streaming and async messaging.
+- **Redis** (`StackExchange.Redis`) for caching, pub/sub, and presence.
+- **Scylla/Cassandra** (`CassandraCSharpDriver`) for distributed persistence.
+- **Elastic** (Serilog sink) for centralized log storage.
 
 ## Testing Strategy
-Placeholders only. Future steps will describe unit, integration, and end-to-end testing.
+Testing relies on xUnit and FluentAssertions for unit coverage, with `Microsoft.AspNetCore.Mvc.Testing` for host-level integration tests and `coverlet.collector` for coverage reporting.
 
 ## Operational Considerations
 Placeholders only. Future steps will cover deployment and runtime considerations.

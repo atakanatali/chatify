@@ -4,8 +4,50 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Real-time messaging for chat hubs and connections. -->
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR" Version="9.0.0" />
+    <!-- JSON protocol support for SignalR payloads. -->
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0" />
+    <!-- Serilog integration for ASP.NET Core logging pipeline. -->
+    <PackageVersion Include="Serilog.AspNetCore" Version="8.0.2" />
+    <!-- Console sink for local and container diagnostics. -->
+    <PackageVersion Include="Serilog.Sinks.Console" Version="5.0.1" />
+    <!-- Enrich logs with environment metadata (machine/user). -->
+    <PackageVersion Include="Serilog.Enrichers.Environment" Version="2.3.0" />
+    <!-- Enrich logs with process identifiers. -->
+    <PackageVersion Include="Serilog.Enrichers.Process" Version="2.0.2" />
+    <!-- Enrich logs with thread identifiers. -->
+    <PackageVersion Include="Serilog.Enrichers.Thread" Version="3.1.0" />
+    <!-- Enrich logs with trace/span identifiers when available. -->
+    <PackageVersion Include="Serilog.Enrichers.Span" Version="3.1.0" />
+    <!-- Elasticsearch sink for centralized log shipping. -->
+    <PackageVersion Include="Elastic.Serilog.Sinks" Version="9.0.0" />
+    <!-- Kafka client for event streaming and messaging. -->
+    <PackageVersion Include="Confluent.Kafka" Version="2.5.3" />
+    <!-- Redis client for caching, presence, and pub/sub. -->
+    <PackageVersion Include="StackExchange.Redis" Version="2.8.0" />
+    <!-- DataStax C# driver for Cassandra/Scylla persistence. -->
+    <PackageVersion Include="CassandraCSharpDriver" Version="3.21.0" />
+    <!-- Bind options from configuration for strongly-typed settings. -->
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
+    <!-- Validation library for request and domain rules. -->
+    <PackageVersion Include="FluentValidation" Version="11.10.0" />
+    <!-- Resilience and retry policies for external calls. -->
+    <PackageVersion Include="Polly" Version="8.3.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Test SDK for .NET test infrastructure. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <!-- xUnit test framework. -->
     <PackageVersion Include="xunit" Version="2.6.6" />
+    <!-- xUnit Visual Studio runner. -->
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.8" />
+    <!-- Fluent assertion helpers for tests. -->
+    <PackageVersion Include="FluentAssertions" Version="6.12.0" />
+    <!-- ASP.NET Core integration testing host. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />
+    <!-- Collect code coverage during test runs. -->
+    <PackageVersion Include="coverlet.collector" Version="6.0.2" />
   </ItemGroup>
 </Project>
