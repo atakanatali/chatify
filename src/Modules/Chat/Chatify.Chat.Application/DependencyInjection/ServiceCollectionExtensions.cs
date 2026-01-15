@@ -1,3 +1,4 @@
+using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.Commands.SendChatMessage;
 using Microsoft.Extensions.DependencyInjection;
 

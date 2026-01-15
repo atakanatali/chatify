@@ -45,7 +45,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.ValidationError,
                 message,
-                exception);
+                exception?.Message);
         }
 
         /// <summary>
@@ -63,7 +63,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.RateLimitExceeded,
                 $"User {userId} has exceeded the message sending rate limit. Please try again later.",
-                exception);
+                exception?.Message);
         }
     }
 
@@ -87,7 +87,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.ConfigurationError,
                 message,
-                exception);
+                exception?.Message);
         }
 
         /// <summary>
@@ -104,7 +104,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.ConfigurationError,
                 "The system is not properly configured. Please contact support.",
-                exception);
+                exception?.Message);
         }
     }
 
@@ -129,7 +129,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.EventProductionFailed,
                 message,
-                exception);
+                exception?.Message);
         }
 
         /// <summary>
@@ -146,7 +146,7 @@ public static class ServiceError
             return new ErrorEntity(
                 ChatifyConstants.ErrorCodes.EventProductionFailed,
                 "Failed to send message due to a temporary system issue. Please try again.",
-                exception);
+                exception?.Message);
         }
     }
 }

@@ -196,11 +196,11 @@ public class SendChatMessageCommandHandler
                 ChatifyConstants.LogMessages.RateLimitExceeded,
                 senderId);
 
-            return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.RateLimitExceeded(senderId, rateLimitResult.Error));
+            return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.RateLimitExceeded(senderId, null));
         }
 
         var messageId = Guid.NewGuid();
-        var createdAtUtc = _clockService.UtcNow;
+        var createdAtUtc = _clockService.GetUtcNow().UtcDateTime;
         var originPodId = _podIdentityService.PodId;
 
         try

@@ -134,15 +134,4 @@ public record EnrichedChatEventDto
         Partition = partition;
         Offset = offset;
     }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="EnrichedChatEventDto"/> record
-    /// using the default parameterless constructor for record serialization support.
-    /// </summary>
-    /// <remarks>
-    /// This parameterless constructor exists to support serialization frameworks
-    /// that require a parameterless constructor. When using this constructor,
-    /// ensure that all required properties are set before using the instance.
-    /// </remarks>
-    public EnrichedChatEventDto() { }
 }
