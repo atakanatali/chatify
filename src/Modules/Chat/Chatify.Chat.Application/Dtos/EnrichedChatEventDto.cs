@@ -35,7 +35,22 @@ namespace Chatify.Chat.Application.Dtos;
 /// is needed.
 /// </para>
 /// </remarks>
-public record EnrichedChatEventDto
+/// <param name="ChatEvent">
+/// The base chat event containing message information.
+/// Must not be null.
+/// </param>
+/// <param name="Partition">
+/// The broker partition to which the event was written.
+/// Must be non-negative.
+/// </param>
+/// <param name="Offset">
+/// The broker offset for the message within its partition.
+/// Must be non-negative.
+/// </param>
+public record EnrichedChatEventDto(
+    ChatEventDto ChatEvent,
+    int Partition,
+    long Offset)
 {
     /// <summary>
     /// Gets the base chat event data containing the message information.
@@ -49,7 +64,7 @@ public record EnrichedChatEventDto
     /// the messaging infrastructure metadata. Use this when you only need
     /// the chat message information and don't require partition/offset details.
     /// </remarks>
-    public required ChatEventDto ChatEvent { get; init; }
+    public required ChatEventDto ChatEvent { get; init; } = ChatEvent;
 
     /// <summary>
     /// Gets the message broker partition to which this chat event was written.
@@ -76,7 +91,7 @@ public record EnrichedChatEventDto
     /// process events simultaneously, at the cost of increased resource usage.
     /// </para>
     /// </remarks>
-    public required int Partition { get; init; }
+    public required int Partition { get; init; } = Partition;
 
     /// <summary>
     /// Gets the message broker offset for this message within its partition.
@@ -105,33 +120,5 @@ public record EnrichedChatEventDto
     /// downstream systems like ScyllaDB.
     /// </para>
     /// </remarks>
-    public required long Offset { get; init; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="EnrichedChatEventDto"/> record
-    /// with the specified chat event and broker metadata.
-    /// </summary>
-    /// <param name="chatEvent">
-    /// The base chat event containing message information.
-    /// Must not be null.
-    /// </param>
-    /// <param name="partition">
-    /// The broker partition to which the event was written.
-    /// Must be non-negative.
-    /// </param>
-    /// <param name="offset">
-    /// The broker offset for the message within its partition.
-    /// Must be non-negative.
-    /// </param>
-    /// <remarks>
-    /// This constructor creates a complete enriched event with both the chat
-    /// message data and the messaging infrastructure metadata. Use this when
-    /// consuming events from a message broker or similar streaming platforms.
-    /// </remarks>
-    public EnrichedChatEventDto(ChatEventDto chatEvent, int partition, long offset)
-    {
-        ChatEvent = chatEvent;
-        Partition = partition;
-        Offset = offset;
-    }
+    public required long Offset { get; init; } = Offset;
 }
