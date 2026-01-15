@@ -1,3 +1,4 @@
+using Chatify.BuildingBlocks.DependencyInjection;
 using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
 using Chatify.Chat.Infrastructure.DependencyInjection;
@@ -107,6 +108,9 @@ public static class Program
             // This must be done early to capture all startup logs
             .UseSerilog((context, services, loggerConfiguration) =>
             {
+                // Retrieve logging options from DI container
+                var loggingOptions = services.BuildServiceProvider().GetRequiredService<LoggingOptionsEntity>();
+
                 loggerConfiguration
                     .ReadFrom.Configuration(context.Configuration)
                     .Enrich.FromLogContext()
@@ -114,10 +118,28 @@ public static class Program
                     .Enrich.WithEnvironmentName()
                     .Enrich.WithProcessId()
                     .Enrich.WithThreadId()
+                    .Enrich.WithProperty("Application", "Chatify.ChatApi")
                     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}")
-                    // Elasticsearch sink will be configured in a future step
-                    // .WriteTo.Elasticsearch(...)
-                    ;
+                    .WriteTo.Elasticsearch(new[] { new Uri(loggingOptions.Uri) }, options =>
+                    {
+                        options.DataStream = new Elastic.Ingest.Elasticsearch.DataStreams.DataStreamName(loggingOptions.IndexPrefix, "date");
+                        options.BootstrapMethod = Elastic.Ingest.Elasticsearch.ElasticsearchIngestBootstrapMethod.Failure;
+                        options.ConfigureChannel = channelOptions =>
+                        {
+                            channelOptions.BufferOptions = new Elastic.Ingest.Elasticsearch.ElasticsearchBufferOptions
+                            {
+                                ExportMaxConcurrency = 1
+                            };
+                        };
+
+                        // Add authentication if configured
+                        if (!string.IsNullOrWhiteSpace(loggingOptions.Username) && !string.IsNullOrWhiteSpace(loggingOptions.Password))
+                        {
+                            options.Authentication = new Elastic.Clients.Elasticsearch.Core.BasicAuthentication(
+                                loggingOptions.Username,
+                                loggingOptions.Password);
+                        }
+                    });
             })
             .ConfigureWebHostDefaults(webBuilder =>
             {
@@ -244,8 +266,8 @@ public static class Program
             // ============================================
             // STEP 2: Register Infrastructure Options
             // ============================================
-            // Logging options must be registered first so Serilog can
-            // use them for log shipping configuration
+            // Logging options and ILogService must be registered first
+            // so Serilog can use them for log shipping configuration
             services.AddLogging(Configuration);
 
             // ============================================

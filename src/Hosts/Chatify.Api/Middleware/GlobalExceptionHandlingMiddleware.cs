@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Chatify.BuildingBlocks.Primitives;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Chatify.Api.Middleware;
@@ -50,8 +51,8 @@ namespace Chatify.Api.Middleware;
 /// Sensitive information is only logged server-side for debugging purposes.
 /// </para>
 /// <para>
-/// <b>Logging:</b> All exceptions are logged with their correlation ID,
-/// enabling efficient debugging and incident response. The correlation ID
+/// <b>Logging:</b> All exceptions are logged via <see cref="ILogService"/> with their
+/// correlation ID, enabling efficient debugging and incident response. The correlation ID
 /// is included in log entries to facilitate searching for related logs.
 /// </para>
 /// <para>
@@ -72,13 +73,13 @@ public sealed class GlobalExceptionHandlingMiddleware
     private readonly RequestDelegate _next;
 
     /// <summary>
-    /// The logger used to record exception details for debugging and monitoring.
+    /// The log service used to record exception details for debugging and monitoring.
     /// </summary>
     /// <remarks>
-    /// Exceptions logged here include correlation IDs and stack traces,
+    /// Exceptions logged here include correlation IDs and request context,
     /// enabling efficient debugging and incident response.
     /// </remarks>
-    private readonly ILogger<GlobalExceptionHandlingMiddleware> _logger;
+    private readonly ILogService _logService;
 
     /// <summary>
     /// The hosting environment information used to determine whether to expose
@@ -97,8 +98,8 @@ public sealed class GlobalExceptionHandlingMiddleware
     /// The delegate representing the next middleware in the ASP.NET Core request pipeline.
     /// Must not be null.
     /// </param>
-    /// <param name="logger">
-    /// The logger used to record exception details.
+    /// <param name="logService">
+    /// The log service used to record exception details.
     /// Must not be null.
     /// </param>
     /// <param name="env">
@@ -116,11 +117,11 @@ public sealed class GlobalExceptionHandlingMiddleware
     /// </remarks>
     public GlobalExceptionHandlingMiddleware(
         RequestDelegate next,
-        ILogger<GlobalExceptionHandlingMiddleware> logger,
+        ILogService logService,
         IWebHostEnvironment env)
     {
         _next = next ?? throw new ArgumentNullException(nameof(next));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _logService = logService ?? throw new ArgumentNullException(nameof(logService));
         _env = env ?? throw new ArgumentNullException(nameof(env));
     }
 
@@ -412,8 +413,8 @@ public sealed class GlobalExceptionHandlingMiddleware
     /// </param>
     /// <remarks>
     /// <para>
-    /// All exceptions are logged with full details including stack traces,
-    /// correlation IDs, and request path. This information is essential for
+    /// All exceptions are logged via <see cref="ILogService"/> with full details including
+    /// stack traces, correlation IDs, and request path. This information is essential for
     /// debugging and incident response.
     /// </para>
     /// <para>
@@ -430,14 +431,24 @@ public sealed class GlobalExceptionHandlingMiddleware
         var path = context.Request.Path;
         var method = context.Request.Method;
 
-        var logLevel = statusCode >= 500 ? LogLevel.Error : LogLevel.Warning;
+        var logContext = new
+        {
+            Path = path.ToString(),
+            Method = method,
+            StatusCode = statusCode,
+            ExceptionType = exception.GetType().Name,
+            ExceptionMessage = exception.Message
+        };
 
-        _logger.Log(logLevel, exception,
-            "Unhandled exception occurred. CorrelationId: {CorrelationId}, Path: {Path}, Method: {Method}, StatusCode: {StatusCode}, Message: {Message}",
-            correlationId,
-            path,
-            method,
-            statusCode,
-            exception.Message);
+        var message = $"Unhandled exception occurred. CorrelationId: {correlationId}, Path: {path}, Method: {method}, StatusCode: {statusCode}";
+
+        if (statusCode >= 500)
+        {
+            _logService.Error(exception, message, logContext);
+        }
+        else
+        {
+            _logService.Warn(message, logContext);
+        }
     }
 }

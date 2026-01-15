@@ -231,7 +231,142 @@ Placeholders only. Future steps will describe how to run tests for Chatify.
 Placeholders only. Future steps will document deployment options for Chatify.
 
 ## Observability
-Placeholders only. Future steps will cover logging, metrics, and tracing for Chatify.
+Chatify implements comprehensive observability through structured logging with Serilog and Elasticsearch, enabling centralized log aggregation, powerful search capabilities, and real-time monitoring.
+
+### Logging Architecture
+
+#### Design Philosophy
+- **Shared Abstraction**: `ILogService` in BuildingBlocks provides a simplified, application-level logging interface
+- **Correlation Awareness**: All logs automatically include correlation IDs for distributed tracing
+- **Structured Logging**: Context objects are serialized as structured properties for powerful querying
+- **Centralized Aggregation**: Logs ship to Elasticsearch for long-term storage and analysis
+
+#### Implementation Location
+The logging abstraction (`ILogService`, `LogService`, `LoggingOptionsEntity`) and DI extensions are placed in **BuildingBlocks** rather than the Observability module because:
+- Logging is a fundamental cross-cutting primitive like CorrelationId and Clock
+- It's used across all modules and layers
+- It should have no dependencies on other modules
+- It aligns with the "Shared Kernel" concept in Domain-Driven Design
+- The Observability module is reserved for domain-specific observability features
+
+#### LogService API
+
+```csharp
+public interface ILogService
+{
+    void Info(string message, object? context = null);
+    void Warn(string message, object? context = null);
+    void Error(Exception exception, string message, object? context = null);
+}
+```
+
+**Usage Examples:**
+```csharp
+// Simple info log
+_logService.Info("User logged in");
+
+// Info log with context
+_logService.Info("Order created", new { OrderId = 123, CustomerId = 456 });
+
+// Warning with context
+_logService.Warn("High memory usage detected", new { UsagePercent = 85, Threshold = 80 });
+
+// Error log with exception
+_logService.Error(ex, "Failed to process payment", new { OrderId = 123, Amount = 99.99m });
+```
+
+#### Serilog Configuration
+
+Serilog is configured in `Program.cs` with the following enrichers:
+- **CorrelationId**: From `ICorrelationContextAccessor` for distributed tracing
+- **MachineName**: Host identifier for multi-pod deployments
+- **EnvironmentName**: Production/staging/development
+- **ProcessId**: Process identifier
+- **ThreadId**: Thread identifier
+- **Application**: Service name (e.g., "Chatify.ChatApi")
+
+#### Elasticsearch Integration
+
+**Index Naming Pattern:**
+```
+logs-chatify-{servicename}-{yyyy.MM.dd}
+```
+Examples:
+- `logs-chatify-chatapi-2026.01.15`
+- `logs-chatify-worker-2026.01.15`
+
+**Configuration (appsettings.json):**
+```json
+{
+  "Chatify": {
+    "Logging": {
+      "Uri": "http://localhost:9200",
+      "Username": "elastic",
+      "Password": "changeme",
+      "IndexPrefix": "logs-chatify-chatapi"
+    }
+  }
+}
+```
+
+**Features:**
+- Console sink for immediate feedback during development
+- Elasticsearch sink for centralized log aggregation
+- Data Streams API for optimized indexing
+- Basic authentication support
+- Automatic buffer configuration for reliability
+
+#### Middleware Integration
+
+The `GlobalExceptionHandlingMiddleware` uses `ILogService.Error` to log all unhandled exceptions with full context:
+- Request path and method
+- HTTP status code
+- Exception type and message
+- Correlation ID for distributed tracing
+
+**Example log entry:**
+```json
+{
+  "@timestamp": "2026-01-15T10:30:45.123Z",
+  "level": "Error",
+  "message": "Unhandled exception occurred. CorrelationId: abc-123, Path: /chat/send, Method: POST, StatusCode: 500",
+  "correlationId": "abc-123",
+  "context": {
+    "Path": "/chat/send",
+    "Method": "POST",
+    "StatusCode": 500,
+    "ExceptionType": "DatabaseConnectionException",
+    "ExceptionMessage": "Unable to connect to ScyllaDB"
+  },
+  "exception": "DatabaseConnectionException: Unable to connect..."
+}
+```
+
+#### Best Practices
+
+**When to Use ILogService:**
+- Application-level logging in command handlers and application services
+- Business operation logging (e.g., "Order created", "Payment processed")
+- Integration point logging (e.g., "Kafka message sent", "Database query executed")
+- Error logging with business context
+
+**When NOT to Use ILogService:**
+- Low-level framework logging (use `ILogger` directly)
+- Performance-critical paths with high-frequency logging (use `ILogger` for efficiency)
+- Third-party library integration (use their native logging abstractions)
+
+**Guidelines:**
+- Use clear, descriptive messages that describe what happened (not how)
+- Include relevant IDs and business identifiers in the context object
+- Avoid logging sensitive data (passwords, tokens, personal information)
+- Use structured context for easier querying (e.g., `new { OrderId = 123 }`)
+
+#### Future Enhancements
+The Observability module is reserved for:
+- Metrics collection (Prometheus)
+- Distributed tracing (OpenTelemetry)
+- Health checks
+- Custom dashboards and alerting rules
 
 ## Appendix
 Placeholders only.

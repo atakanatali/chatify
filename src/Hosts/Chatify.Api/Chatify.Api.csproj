@@ -12,5 +12,6 @@
   <ItemGroup>
     <!-- Serilog for logging - version managed centrally in Directory.Packages.props -->
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Elastic.Serilog.Sinks" />
   </ItemGroup>
 </Project>
