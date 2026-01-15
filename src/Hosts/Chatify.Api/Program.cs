@@ -3,17 +3,8 @@ using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
 using Chatify.Api.Hubs;
 using Chatify.Api.Middleware;
-using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Serilog
-builder.Host.UseSerilog((context, loggerConfiguration) =>
-{
-    loggerConfiguration
-        .ReadFrom.Configuration(context.Configuration)
-        .ConfigureChatifySerilog(context.Configuration);
-});
 
 var configuration = builder.Configuration;
 
@@ -22,7 +13,7 @@ builder.Services.AddSingleton<IClockService, SystemClockService>();
 builder.Services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
 // Logging
-builder.Services.AddChatifyLogging(configuration);
+builder.Services.AddSerilog(configuration);
 
 // Infrastructure Providers
 builder.Services.AddDatabase(configuration);
