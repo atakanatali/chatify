@@ -38,6 +38,13 @@ namespace Chatify.BuildingBlocks.Primitives;
 /// call logging methods concurrently. Each call independently retrieves the current
 /// correlation ID and writes to the underlying logger.
 /// </para>
+/// <para>
+/// <b>Constructor Dependencies:</b>
+/// <list type="bullet">
+/// <item><see cref="ILogger"/> - The underlying logger for writing log entries</item>
+/// <item><see cref="ICorrelationContextAccessor"/> - Accessor for correlation ID from async-local storage</item>
+/// </list>
+/// </para>
 /// </remarks>
 /// <param name="logger">
 /// The underlying <see cref="ILogger"/> instance used to write log entries.
@@ -47,54 +54,11 @@ namespace Chatify.BuildingBlocks.Primitives;
 /// The accessor for the current correlation context. Used to include correlation IDs
 /// in log entries for distributed tracing. Injected via dependency injection.
 /// </param>
-public sealed class LogService : ILogService
+public sealed class LogService(ILogger<LogService> logger, ICorrelationContextAccessor correlationContextAccessor) : ILogService
 {
     /// <summary>
-    /// The underlying logger used to write log entries.
+    /// Logs an informational message with optional contextual data.
     /// </summary>
-    /// <remarks>
-    /// This is the standard ASP.NET Core <see cref="ILogger"/> that is configured
-    /// with Serilog in the host builder. The logger includes all enrichers, sinks,
-    /// and filters configured at startup.
-    /// </remarks>
-    private readonly ILogger _logger;
-
-    /// <summary>
-    /// The accessor for retrieving the current correlation ID from async-local storage.
-    /// </summary>
-    /// <remarks>
-    /// The correlation ID is included in all log entries to enable distributed tracing
-    /// and log aggregation across services and requests.
-    /// </remarks>
-    private readonly ICorrelationContextAccessor _correlationContextAccessor;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="LogService"/> class.
-    /// </summary>
-    /// <param name="logger">
-    /// The underlying <see cref="ILogger"/> instance used to write log entries.
-    /// Must not be null.
-    /// </param>
-    /// <param name="correlationContextAccessor">
-    /// The accessor for the current correlation context. Must not be null.
-    /// </param>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="logger"/> or <paramref name="correlationContextAccessor"/> is null.
-    /// </exception>
-    /// <remarks>
-    /// <para>
-    /// The constructor is called by the dependency injection container when the service
-    /// is first requested within a scope. The provided logger is specific to the
-    /// <c>LogService</c> type, ensuring log entries include the correct source context.
-    /// </para>
-    /// </remarks>
-    public LogService(
-        ILogger<LogService> logger,
-        ICorrelationContextAccessor correlationContextAccessor)
-    {
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _correlationContextAccessor = correlationContextAccessor ?? throw new ArgumentNullException(nameof(correlationContextAccessor));
-    }
 
     /// <summary>
     /// Logs an informational message with optional contextual data.
@@ -110,18 +74,18 @@ public sealed class LogService : ILogService
     {
         GuardUtility.NotNull(message);
 
-        var correlationId = _correlationContextAccessor.CorrelationId;
+        var correlationId = correlationContextAccessor.CorrelationId;
 
         if (context is null)
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Message: {Message}, CorrelationId: {CorrelationId}",
                 message,
                 correlationId);
         }
         else
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Message: {Message}, CorrelationId: {CorrelationId}, Context: {@Context}",
                 message,
                 correlationId,
@@ -143,18 +107,18 @@ public sealed class LogService : ILogService
     {
         GuardUtility.NotNull(message);
 
-        var correlationId = _correlationContextAccessor.CorrelationId;
+        var correlationId = correlationContextAccessor.CorrelationId;
 
         if (context is null)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Message: {Message}, CorrelationId: {CorrelationId}",
                 message,
                 correlationId);
         }
         else
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 "Message: {Message}, CorrelationId: {CorrelationId}, Context: {@Context}",
                 message,
                 correlationId,
@@ -181,11 +145,11 @@ public sealed class LogService : ILogService
         GuardUtility.NotNull(exception);
         GuardUtility.NotNull(message);
 
-        var correlationId = _correlationContextAccessor.CorrelationId;
+        var correlationId = correlationContextAccessor.CorrelationId;
 
         if (context is null)
         {
-            _logger.LogError(
+            logger.LogError(
                 exception,
                 "Message: {Message}, CorrelationId: {CorrelationId}",
                 message,
@@ -193,7 +157,7 @@ public sealed class LogService : ILogService
         }
         else
         {
-            _logger.LogError(
+            logger.LogError(
                 exception,
                 "Message: {Message}, CorrelationId: {CorrelationId}, Context: {@Context}",
                 message,

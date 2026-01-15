@@ -12,12 +12,12 @@ namespace Chatify.BuildingBlocks.Primitives;
 /// <para>
 /// <b>Design Philosophy:</b> The interface is intentionally minimal with only three
 /// methods (Info, Warn, Error) to cover the most common logging scenarios. Additional
-/// complexity can be added through the optional <paramref name="context"/> parameter
-/// which accepts any object for structured logging.
+/// complexity can be added through the optional context parameter which accepts any
+/// object for structured logging.
 /// </para>
 /// <para>
-/// <b>Structured Logging:</b> All methods accept an optional <paramref name="context"/>
-/// parameter that can be any object (anonymous type, DTO, entity, etc.). The context
+/// <b>Structured Logging:</b> All methods accept an optional context parameter
+/// that can be any object (anonymous type, DTO, entity, etc.). The context
 /// object is serialized and included in the log entry as structured properties, enabling
 /// powerful querying and filtering in log aggregation systems like Elasticsearch.
 /// </para>
