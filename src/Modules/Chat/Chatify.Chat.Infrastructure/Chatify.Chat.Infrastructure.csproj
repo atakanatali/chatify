@@ -12,5 +12,7 @@
     <PackageReference Include="Confluent.Kafka" />
     <!-- StackExchange.Redis for presence, rate limiting, and caching -->
     <PackageReference Include="StackExchange.Redis" />
+    <!-- DataStax C# driver for Cassandra/ScyllaDB persistence -->
+    <PackageReference Include="CassandraCSharpDriver" />
   </ItemGroup>
 </Project>

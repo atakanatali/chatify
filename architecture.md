@@ -505,8 +505,8 @@ if (rateLimitResult.IsFailure)
 **Purpose:** Durable storage for chat message history with time-series query optimization.
 
 **Options:** `ScyllaOptionsEntity`
-- `ContactPoints` - Comma-separated list of node addresses
-- `Keyspace` - Keyspace name
+- `ContactPoints` - Comma-separated list of node addresses (default port: 9042)
+- `Keyspace` - Keyspace name (default: "chatify")
 - `Username` - Authentication username (optional)
 - `Password` - Authentication password (optional)
 
@@ -514,18 +514,19 @@ if (rateLimitResult.IsFailure)
 
 **Registered Services:**
 - `ScyllaOptionsEntity` (singleton) - Configuration options
-- `ScyllaChatHistoryRepository` (singleton) - Implements `IChatHistoryRepository`
-- Future: `ISession` / `ICluster` registration, schema migrations
+- `ICluster` (singleton) - Cassandra/ScyllaDB cluster connection
+- `ISession` (singleton) - Cassandra/ScyllaDB session to keyspace
+- `ChatHistoryRepository` (singleton) - Implements `IChatHistoryRepository`
 
-**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+**Implementation Status:** Fully implemented with idempotent writes and pagination support.
 
-**Configuration Section:** `Chatify:Scylla`
+**Configuration Sections:** `Chatify:Scylla` (preferred) or `Chatify:Database` (backward compatibility)
 
 ```json
 {
   "Chatify": {
     "Scylla": {
-      "ContactPoints": "scylla-node1:9042,scylla-node2:9042",
+      "ContactPoints": "scylla-node1:9042,scylla-node2:9042,scylla-node3:9042",
       "Keyspace": "chatify",
       "Username": "chatify_user",
       "Password": "secure_password"
@@ -534,19 +535,144 @@ if (rateLimitResult.IsFailure)
 }
 ```
 
+**Keyspace Creation:**
+```sql
+-- Production (multi-datacenter)
+CREATE KEYSPACE IF NOT EXISTS chatify
+WITH REPLICATION = {
+  'class': 'NetworkTopologyStrategy',
+  'dc1': 3,
+  'dc2': 3
+} AND DURABLE_WRITES = true;
+
+-- Development (single datacenter)
+CREATE KEYSPACE IF NOT EXISTS chatify
+WITH REPLICATION = {
+  'class': 'SimpleStrategy',
+  'replication_factor': 1
+};
+```
+
 **Table Schema:**
 ```sql
-CREATE TABLE chat_messages (
-    scope_type text,
+CREATE TABLE IF NOT EXISTS chat_messages (
     scope_id text,
     created_at_utc timestamp,
     message_id uuid,
     sender_id text,
     text text,
     origin_pod_id text,
-    PRIMARY KEY ((scope_type, scope_id), created_at_utc, message_id)
-) WITH CLUSTERING ORDER BY (created_at_utc ASC);
+    broker_partition int,
+    broker_offset bigint,
+    PRIMARY KEY ((scope_id), created_at_utc, message_id)
+) WITH CLUSTERING ORDER BY (created_at_utc ASC)
+AND gc_grace_seconds = 86400
+AND compaction = {
+  'class': 'LeveledCompactionStrategy',
+  'sstable_size_in_mb': 160
+};
 ```
+
+**Schema Design:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `scope_id` | `text` | Composite key: `"scope_type:scope_id"` (partition key) |
+| `created_at_utc` | `timestamp` | Message creation time (clustering key, ASC) |
+| `message_id` | `uuid` | Unique message identifier (clustering column, uniqueness) |
+| `sender_id` | `text` | User ID who sent the message |
+| `text` | `text` | Message content |
+| `origin_pod_id` | `text` | Pod that created the message |
+| `broker_partition` | `int` | Message broker partition (null when written from API) |
+| `broker_offset` | `bigint` | Message broker offset (null when written from API) |
+
+**Composite scope_id Format:**
+```
+"{ScopeType}:{ScopeId}"
+
+Examples:
+- "Channel:general"
+- "Channel:random"
+- "DirectMessage:user1-user2"
+```
+
+**Primary Key Design:**
+- **Partition Key:** `(scope_id)` - Groups all messages for a scope on same nodes
+- **Clustering Keys:**
+  - `created_at_utc ASC` - Chronological ordering for time-range queries
+  - `message_id` - Uniqueness guard and tiebreaker for identical timestamps
+
+**Idempotent Write Strategy:**
+
+The repository uses lightweight transactions (LWT) for idempotent appends:
+
+```sql
+INSERT INTO chat_messages (...) VALUES (?, ?, ...) IF NOT EXISTS;
+```
+
+**Tradeoffs:**
+
+| Aspect | Lightweight Transactions (Current) | Regular INSERT + Dedupe |
+|--------|-----------------------------------|-------------------------|
+| **Correctness** | Strong guarantee, no duplicates | Potential duplicates on retry |
+| **Latency** | Higher (~4 round trips) | Lower (~1 round trip) |
+| **Throughput** | Lower (~5K ops/sec/node) | Higher (~50K+ ops/sec/node) |
+
+**When to Use Alternative:** If write throughput becomes a bottleneck, consider:
+- Regular INSERT with client-side deduplication (track MessageIds in Redis)
+- Materialized View for uniqueness check
+- Accept eventual consistency and filter at query time
+
+**Query Patterns:**
+
+1. **Get Most Recent Messages:**
+   ```sql
+   SELECT * FROM chat_messages
+   WHERE scope_id = ?
+   ORDER BY created_at_utc ASC
+   LIMIT ?;
+   ```
+
+2. **Get Messages by Time Range:**
+   ```sql
+   SELECT * FROM chat_messages
+   WHERE scope_id = ?
+     AND created_at_utc >= ?
+     AND created_at_utc < ?
+   ORDER BY created_at_utc ASC
+   LIMIT ?;
+   ```
+
+**Pagination Strategy:**
+
+Timestamp-based pagination (current implementation):
+```csharp
+// First page
+var page1 = await repository.QueryByScopeAsync(
+    scopeType, scopeId,
+    fromUtc: null,
+    toUtc: DateTime.UtcNow,
+    limit: 100,
+    ct);
+
+// Next page (use last message's timestamp + 1 tick)
+var lastTimestamp = page1.Last().CreatedAtUtc;
+var page2 = await repository.QueryByScopeAsync(
+    scopeType, scopeId,
+    fromUtc: lastTimestamp.AddTicks(1),
+    toUtc: DateTime.UtcNow,
+    limit: 100,
+    ct);
+```
+
+**Consistency Levels:**
+- **Writes:** LOCAL_QUORUM - Balance consistency and latency
+- **Queries:** LOCAL_ONE - Fast reads for recent data
+- **LWT:** SERIAL - Required for lightweight transactions
+
+**Prepared Statements:** All CQL statements are prepared once at startup and reused for optimal performance.
+
+**Session Management:** The session is created as a singleton and disposed on application shutdown. Connection pooling is managed automatically by the Cassandra driver.
 
 ---
 
