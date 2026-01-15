@@ -225,7 +225,169 @@ Placeholders only. Future steps will include build and run instructions for Chat
 Placeholders only. Future steps will describe local development workflows for Chatify.
 
 ## Testing
-Placeholders only. Future steps will describe how to run tests for Chatify.
+
+### SignalR Hub Testing with wscat
+
+**Note:** `wscat` does not support the SignalR protocol directly. Use SignalR client libraries for proper testing. The examples below use standard WebSocket clients with SignalR-compatible messages.
+
+#### Using the .NET SignalR Client
+
+```csharp
+using Microsoft.AspNetCore.SignalR.Client;
+
+// Create connection
+var connection = new HubConnectionBuilder()
+    .WithUrl("http://localhost:5000/hubs/chat")
+    .Build();
+
+// Register message handler
+connection.On<ChatEventDto>("ReceiveMessage", (chatEvent) => {
+    Console.WriteLine($"[{chatEvent.ScopeId}] {chatEvent.SenderId}: {chatEvent.Text}");
+});
+
+// Start connection
+await connection.StartAsync();
+
+// Join a scope
+await connection.InvokeAsync("JoinScopeAsync", "general");
+
+// Send a message
+await connection.InvokeAsync("SendAsync", new ChatSendRequestDto {
+    ScopeType = ChatScopeTypeEnum.Channel,
+    ScopeId = "general",
+    Text = "Hello, Chatify!"
+});
+```
+
+#### Using JavaScript/TypeScript SignalR Client
+
+```javascript
+// Install: npm install @microsoft/signalr
+
+import * as signalR from '@microsoft/signalr';
+
+// Build connection
+const connection = new signalR.HubConnectionBuilder()
+    .withUrl('/hubs/chat')
+    .build();
+
+// Deduplication for at-least-once delivery
+const seenMessages = new Set();
+
+// Register message handler
+connection.on('ReceiveMessage', (event) => {
+    // Client-side deduplication
+    if (seenMessages.has(event.messageId)) {
+        console.log(`Duplicate skipped: ${event.messageId}`);
+        return;
+    }
+    seenMessages.add(event.messageId);
+
+    // Prune old entries to prevent memory bloat
+    if (seenMessages.size > 10000) {
+        const oldest = seenMessages.keys().next().value;
+        seenMessages.delete(oldest);
+    }
+
+    console.log(`[${event.scopeId}] ${event.senderId}: ${event.text}`);
+});
+
+// Start connection
+await connection.start();
+
+// Join a scope
+await connection.invoke('JoinScopeAsync', 'general');
+
+// Send a message
+await connection.invoke('SendAsync', {
+    scopeType: 0, // Channel
+    scopeId: 'general',
+    text: 'Hello, Chatify!'
+});
+```
+
+#### Using Browser DevTools Console
+
+```javascript
+// Open browser DevTools console on a page that loads SignalR
+
+// Create connection
+const connection = new signalR.HubConnectionBuilder()
+    .withUrl('http://localhost:5000/hubs/chat')
+    .configureLogging(signalR.LogLevel.Information)
+    .build();
+
+// Message handler
+connection.on('ReceiveMessage', (event) => {
+    console.log('Received:', event);
+    // Display in UI...
+});
+
+// Start and join
+connection.start().then(() => {
+    console.log('Connected');
+    return connection.invoke('JoinScopeAsync', 'general');
+}).then(() => {
+    console.log('Joined scope: general');
+});
+```
+
+### Kafka Topic Testing with kcat (formerly kafkacat)
+
+```bash
+# Install: apt-get install kafkacat (Debian/Ubuntu)
+# Or: brew install kcat (macOS)
+
+# Consume from chat-events topic
+kcat -C -b localhost:9092 -t chat-events -f 'Partition(%p) Offset(%o) Key(%k): %s\n'
+
+# Produce a test message
+echo '{"messageId":"123e4567-e89b-12d3-a456-426614174000","scopeType":0,"scopeId":"general","senderId":"test-user","text":"Hello from kcat","createdAtUtc":"2026-01-15T10:30:00Z","originPodId":"test-pod"}' | \
+  kcat -P -b localhost:9092 -t chat-events -k general
+```
+
+### Verifying Fan-Out Broadcast
+
+To verify the fan-out consumption pattern works across multiple pods:
+
+1. **Deploy multiple ChatApi pods** (e.g., 3 replicas)
+
+2. **Connect to each pod** with a SignalR client and join the same scope:
+
+```javascript
+// Client 1 - connects to Pod A
+// Client 2 - connects to Pod B
+// Client 3 - connects to Pod C
+
+// All join the same scope
+await connection.invoke('JoinScopeAsync', 'general');
+```
+
+3. **Send a message from any client**:
+
+```javascript
+await connection.invoke('SendAsync', {
+    scopeType: 0,
+    scopeId: 'general',
+    text: 'Testing fan-out broadcast!'
+});
+```
+
+4. **Verify all clients receive the message**, regardless of which pod they're connected to.
+
+5. **Check logs** to see each pod's consumer independently receiving and broadcasting:
+
+```bash
+# View logs for a specific pod
+kubectl logs -f deployment/chatify-chat-api -c chatify-chat-api | grep "ChatBroadcastBackgroundService"
+```
+
+Expected output pattern:
+```
+ChatBroadcastBackgroundService starting. ConsumerGroupId: chatify-broadcast-chat-api-7d9f4c5b6d-abc12...
+Broadcasting chat event xxx to scope general (partition 0, offset 42)...
+Successfully broadcasted message xxx to scope general
+```
 
 ## Deployment
 Placeholders only. Future steps will document deployment options for Chatify.

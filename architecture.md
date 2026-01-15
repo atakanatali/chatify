@@ -164,6 +164,111 @@ The infrastructure layer implements the ports defined by the Application layer, 
 
 **Graceful Shutdown:** Producer implements `IDisposable`; the DI container disposes it on application shutdown, flushing any pending messages.
 
+#### Fan-Out Consumer (Broadcast Delivery)
+**Purpose:** Consumes chat events from Kafka and broadcasts them to connected SignalR clients in real-time. Each pod runs its own consumer to deliver messages locally.
+
+**Implementation:** `ChatBroadcastBackgroundService` (located in `src/Hosts/Chatify.Api/BackgroundServices/`)
+
+**Consumer Configuration:**
+- **Group ID:** Unique per pod: `{BroadcastConsumerGroupPrefix}-{PodId}`
+  - Example: `chatify-broadcast-chat-api-7d9f4c5b6d-abc12`
+- **Auto Offset Reset:** `earliest` - New consumers start from the beginning of the topic
+- **Auto Commit:** `true` with 5-second interval for at-least-once delivery
+- **Fetch Settings:** Low latency (1 byte min, 100ms max wait) for real-time delivery
+
+**Fan-Out Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     Fan-Out Broadcast Architecture                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Kafka Topic: "chat-events" (3 partitions)                                 │
+│     ├─ Partition 0 ─────────────────────────────────────────────┐           │
+│     ├─ Partition 1 ──┐                                          │           │
+│     └─ Partition 2 ──┼──────────────────────────────────────────┤           │
+│                     │          │            │                    │           │
+│                     │          │            │                    │           │
+│                     ▼          ▼            ▼                    │           │
+│              ┌─────────────────────────────────────────┐         │           │
+│              │         Each partition is                │         │           │
+│              │    consumed by ALL pods independently    │         │           │
+│              └─────────────────────────────────────────┘         │           │
+│                     │          │            │                    │           │
+│       ┌───────────┴──────┐  ┌─┴──────────┐  ┌─┴──────────┐     │           │
+│       │                  │  │            │  │            │     │           │
+│       ▼                  ▼  ▼            ▼  ▼            ▼     │           │
+│  ┌─────────┐        ┌─────────┐    ┌─────────┐    ┌─────────┐   │           │
+│  │ Pod A   │        │ Pod B   │    │ Pod C   │    │ Pod N   │   │           │
+│  │ Group:  │        │ Group:  │    │ Group:  │    │ Group:  │   │           │
+│  │ chatify-│        │ chatify-│    │ chatify-│    │ chatify-│   │           │
+│  │ broadcast│       │ broadcast│    │ broadcast│    │ broadcast│   │           │
+│  │ -pod-a  │        │ -pod-b  │    │ -pod-c  │    │ -pod-n  │   │           │
+│  └────┬────┘        └────┬────┘    └────┬────┘    └────┬────┘   │           │
+│       │                  │            │            │         │           │
+│       │ Broadcast locally│            │            │         │           │
+│       ▼                  ▼            ▼            ▼         │           │
+│  ┌─────────┐        ┌─────────┐    ┌─────────┐    ┌─────────┐   │           │
+│  │SignalR  │        │SignalR  │    │SignalR  │    │SignalR  │   │           │
+│  │Clients  │        │Clients  │    │Clients  │    │Clients  │   │           │
+│  │connected│        │connected│    │connected│    │connected│   │           │
+│  │to Pod A │        │to Pod B │    │to Pod C │    │to Pod N │   │           │
+│  └─────────┘        └─────────┘    └─────────┘    └─────────┘   │           │
+│                                                                 │           │
+└─────────────────────────────────────────────────────────────────┘           │
+                                                                             │
+│  Key Characteristics:                                                      │
+│  - Each pod has a UNIQUE consumer group ID                               │
+│  - Each pod receives ALL messages from ALL partitions                     │
+│  - Messages are broadcast to local SignalR clients only                   │
+│  - Clients connect to any pod and receive all messages for their scopes   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Ordering Guarantees:**
+- **Within a ScopeId (Partition):** Messages are delivered in strict order by offset
+- **Across ScopeIds:** No ordering guarantee - different scopes can be processed in parallel
+- **At-Least-Once Delivery:** Duplicate delivery is possible; clients should dedupe by MessageId
+
+**Client Deduplication Example:**
+```javascript
+// JavaScript/TypeScript SignalR client
+const seenMessages = new Set();
+
+connection.on("ReceiveMessage", (event) => {
+    // Skip if we've already processed this message
+    if (seenMessages.has(event.messageId)) {
+        console.log(`Duplicate message skipped: ${event.messageId}`);
+        return;
+    }
+
+    // Mark as seen
+    seenMessages.add(event.messageId);
+
+    // Optionally prune old entries to prevent memory bloat
+    if (seenMessages.size > 10000) {
+        const oldest = seenMessages.keys().next().value;
+        seenMessages.delete(oldest);
+    }
+
+    // Process the message...
+    displayMessage(event);
+});
+```
+
+**Error Handling:**
+- Consume exceptions are logged to Elasticsearch with full context (partition, offset, error)
+- Service continues with exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
+- Initial connection failures trigger retry with backoff
+- Deserialization errors log the offending message payload for debugging
+- Graceful shutdown commits final offsets and closes consumer properly
+
+**Background Service Registration:**
+```csharp
+// In Program.cs (Chatify.Api)
+builder.Services.AddHostedService<BackgroundServices.ChatBroadcastBackgroundService>();
+```
+
 ---
 
 #### Redis (Presence, Rate Limiting, Caching)

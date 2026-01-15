@@ -1,3 +1,4 @@
+using Chatify.Api.BackgroundServices;
 using Chatify.BuildingBlocks.DependencyInjection;
 using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
@@ -27,6 +28,9 @@ builder.Services.AddChatifyChatApplication();
 // ASP.NET Core Services
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
+
+// Background Services
+builder.Services.AddHostedService<ChatBroadcastBackgroundService>();
 
 var app = builder.Build();
 
