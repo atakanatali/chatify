@@ -401,7 +401,103 @@ DEL presence:user:user123
 - `OnDisconnectedAsync`: Calls `SetOfflineAsync` to remove presence
 - Heartbeat: Optional method to refresh TTL for long-lived connections
 
-**Rate Limiting:** `ratelimit:{key}` (sorted set with sliding window) - Placeholder implementation
+#### Rate Limiting (Endpoint-Level)
+**Purpose:** Enforces rate limits per user per endpoint using Redis with fixed window counter algorithm.
+
+**Implementation:** `RateLimitService` (located in `src/Modules/Chat/Chatify.Chat.Infrastructure/Services/RateLimit/`)
+
+**Algorithm:** Fixed Window Counter with Atomic Lua Script
+- **Key Pattern:** `rl:{userId}:{endpoint}:{window}`
+  - Example: `rl:user123:SendMessage:60`
+  - Window duration is included in the key to prevent configuration change conflicts
+- **Data Structure:** Redis string counter with TTL
+- **Atomic Operation:** Lua script performs GET, INCR, EXPIRE atomically
+- **Window Management:** TTL automatically expires old counters
+
+**Lua Script:**
+```lua
+local current = redis.call('GET', KEYS[1])
+if current == false then
+    current = 0
+else
+    current = tonumber(current)
+end
+if current < tonumber(ARGV[1]) then
+    redis.call('INCR', KEYS[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    return 1  -- Allowed
+else
+    return 0  -- Blocked
+end
+```
+
+**Redis Key Semantics:**
+
+| Key Pattern | Type | Value | TTL | Purpose |
+|-------------|------|-------|-----|---------|
+| `rl:{userId}:{endpoint}:{window}` | String | Counter (incrementing) | window seconds | Tracks request count for endpoint |
+
+**Example Operations:**
+```
+# Check and increment rate limit for user123 sending messages
+# Key: rl:user123:SendMessage:60
+# Threshold: 100
+# Window: 60 seconds
+
+EVAL "<lua-script>" 1 rl:user123:SendMessage:60 100 60
+# Returns: 1 (allowed) or 0 (blocked)
+
+# If allowed, counter is incremented and TTL is set:
+GET rl:user123:SendMessage:60
+# Result: "1" (first request)
+TTL rl:user123:SendMessage:60
+# Result: 60 (seconds until expiration)
+
+# After 100 requests within the window:
+EVAL "<lua-script>" 1 rl:user123:SendMessage:60 100 60
+# Returns: 0 (blocked)
+
+# After 60 seconds, key expires automatically
+# Next request starts a fresh window
+```
+
+**Integration in SendChatMessageCommandHandler:**
+```csharp
+var rateLimitKey = ChatifyConstants.RateLimit.SendMessageRateLimitKey(senderId);
+var rateLimitResult = await _rateLimitService.CheckAndIncrementAsync(
+    rateLimitKey,
+    ChatifyConstants.RateLimit.SendChatMessageThreshold,
+    ChatifyConstants.RateLimit.SendChatMessageWindowSeconds,
+    cancellationToken);
+
+if (rateLimitResult.IsFailure)
+{
+    _logger.LogWarning("Rate limit exceeded for sender {SenderId}", senderId);
+    return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.RateLimitExceeded(rateLimitKey, null));
+}
+```
+
+**Logging:**
+- **Debug:** Logs every rate limit check with key, threshold, and window
+- **Warning:** Logs when rate limit is exceeded
+- **Error:** Logs Redis connection failures
+
+**Error Handling:**
+- Returns `ResultEntity.Success()` when request is allowed
+- Returns `ResultEntity.Failure(ErrorEntity)` when:
+  - Rate limit exceeded (warning log)
+  - Redis connection error (error log, returns configuration error)
+
+**Fixed Window Characteristics:**
+- Simple and efficient with O(1) complexity
+- Counters reset at fixed time boundaries
+- TTL ensures automatic cleanup of expired windows
+- Allows bursts at window boundaries (e.g., 100 requests at 12:00:59, then 100 more at 12:01:00)
+
+**Distributed Guarantees:**
+- All pods see the same counter values via Redis
+- Atomic Lua script prevents race conditions
+- No single point of failure with Redis cluster
 
 ---
 

@@ -31,12 +31,24 @@ public static class ChatifyConstants
     public static class RateLimit
     {
         /// <summary>
-        /// The prefix for all chat message sending rate limit keys.
+        /// The prefix for all endpoint-level rate limit keys.
         /// </summary>
         /// <remarks>
-        /// Format: "user-{userId}:send-message"
+        /// Format: "rl:{userId}:{endpoint}:{window}"
+        /// where:
+        /// - {userId} is the user identifier
+        /// - {endpoint} is the operation name (e.g., "SendMessage")
+        /// - {window} is the window duration in seconds (for TTL management)
         /// </remarks>
-        public const string SendChatMessageKeyPrefix = "user-{0}:send-message";
+        public const string EndpointKeyPrefix = "rl:{0}:{1}:{2}";
+
+        /// <summary>
+        /// The endpoint name for the SendMessage operation.
+        /// </summary>
+        /// <remarks>
+        /// Used in rate limit keys to identify the message sending endpoint.
+        /// </remarks>
+        public const string SendMessageEndpoint = "SendMessage";
 
         /// <summary>
         /// The default threshold for message sending rate limits.
@@ -55,13 +67,29 @@ public static class ChatifyConstants
         public const int SendChatMessageWindowSeconds = 60;
 
         /// <summary>
-        /// Formats a rate limit key for chat message sending.
+        /// Formats an endpoint-level rate limit key for the SendMessage operation.
         /// </summary>
         /// <param name="userId">The user ID to include in the key.</param>
-        /// <returns>A formatted rate limit key string.</returns>
-        public static string SendChatMessageKey(string userId)
+        /// <returns>A formatted rate limit key string following the pattern rl:{userId}:{endpoint}:{window}.</returns>
+        /// <remarks>
+        /// <para>
+        /// <b>Key Format:</b> The returned key follows the pattern:
+        /// <c>rl:{userId}:SendMessage:{windowSeconds}</c>
+        /// </para>
+        /// <para>
+        /// <b>Example:</b> For user "user123" with a 60-second window:
+        /// <c>rl:user123:SendMessage:60</c>
+        /// </para>
+        /// <para>
+        /// <b>Why Include Window in Key:</b> The window duration is included in the key
+        /// to ensure that if the rate limit configuration changes, old counters with
+        /// different window durations won't interfere with the new configuration.
+        /// Each window duration has its own independent counter.
+        /// </para>
+        /// </remarks>
+        public static string SendMessageRateLimitKey(string userId)
         {
-            return string.Format(SendChatMessageKeyPrefix, userId);
+            return string.Format(EndpointKeyPrefix, userId, SendMessageEndpoint, SendChatMessageWindowSeconds);
         }
     }
 

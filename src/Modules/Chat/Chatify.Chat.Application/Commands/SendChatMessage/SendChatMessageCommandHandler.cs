@@ -183,7 +183,7 @@ public class SendChatMessageCommandHandler
             return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.ValidationFailed(ex.Message, ex));
         }
 
-        var rateLimitKey = ChatifyConstants.RateLimit.SendChatMessageKey(senderId);
+        var rateLimitKey = ChatifyConstants.RateLimit.SendMessageRateLimitKey(senderId);
         var rateLimitResult = await _rateLimitService.CheckAndIncrementAsync(
             rateLimitKey,
             ChatifyConstants.RateLimit.SendChatMessageThreshold,
@@ -196,7 +196,7 @@ public class SendChatMessageCommandHandler
                 ChatifyConstants.LogMessages.RateLimitExceeded,
                 senderId);
 
-            return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.RateLimitExceeded(senderId, null));
+            return ResultEntity<EnrichedChatEventDto>.Failure(ServiceError.Chat.RateLimitExceeded(rateLimitKey, null));
         }
 
         var messageId = Guid.NewGuid();
