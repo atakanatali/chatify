@@ -35,114 +35,19 @@ namespace Chatify.Chat.Application.Dtos;
 /// is needed.
 /// </para>
 /// </remarks>
-public record EnrichedChatEventDto
-{
-    /// <summary>
-    /// Gets the base chat event data containing the message information.
-    /// </summary>
-    /// <value>
-    /// A <see cref="ChatEventDto"/> containing all the core chat event data
-    /// including message ID, scope information, sender, text, and timestamps.
-    /// </value>
-    /// <remarks>
-    /// This property provides access to the underlying chat event data without
-    /// the messaging infrastructure metadata. Use this when you only need
-    /// the chat message information and don't require partition/offset details.
-    /// </remarks>
-    public required ChatEventDto ChatEvent { get; init; }
-
-    /// <summary>
-    /// Gets the message broker partition to which this chat event was written.
-    /// </summary>
-    /// <value>
-    /// A non-negative integer representing the partition ID within the broker topic.
-    /// Partition IDs are zero-indexed and range from 0 to (number of partitions - 1).
-    /// </value>
-    /// <remarks>
-    /// <para>
-    /// <b>Partitioning Strategy:</b> In Chatify, partition assignment is determined
-    /// by a hash of (ScopeType, ScopeId) to ensure all messages for the same scope
-    /// are delivered to the same partition. This guarantees ordering within a scope.
-    /// </para>
-    /// <para>
-    /// <b>Consumer Implications:</b> Consumers track the partition and offset
-    /// to manage their consumption progress. Each partition can be consumed by
-    /// a single consumer within a consumer group, enabling parallel processing
-    /// across partitions while maintaining ordering per partition.
-    /// </para>
-    /// <para>
-    /// <b>Scaling:</b> The partition count determines the maximum parallelism
-    /// for consuming chat events. More partitions allow more consumers to
-    /// process events simultaneously, at the cost of increased resource usage.
-    /// </para>
-    /// </remarks>
-    public required int Partition { get; init; }
-
-    /// <summary>
-    /// Gets the message broker offset for this message within its partition.
-    /// </summary>
-    /// <value>
-    /// A non-negative integer representing the sequential offset of this message
-    /// within the partition. Offsets are monotonically increasing and unique
-    /// within each partition.
-    /// </value>
-    /// <remarks>
-    /// <para>
-    /// <b>Offset Semantics:</b> Message broker offsets represent the position of a
-    /// message within a partition. Each new message receives an offset one greater
-    /// than the previous message. Offsets are immutable and assigned by the broker.
-    /// </para>
-    /// <para>
-    /// <b>Consumer Progress Tracking:</b> Consumers periodically commit their
-    /// current offset to the broker to track their progress. After a restart or
-    /// rebalance, consumers resume from the last committed offset. The offset
-    /// stored here represents the position of this specific message.
-    /// </para>
-    /// <para>
-    /// <b>Exactly-Once Processing:</b> For implementations requiring exactly-once
-    /// semantics, the (partition, offset) tuple serves as a unique identifier
-    /// that can be used for idempotency checks when persisting events to
-    /// downstream systems like ScyllaDB.
-    /// </para>
-    /// </remarks>
-    public required long Offset { get; init; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="EnrichedChatEventDto"/> record
-    /// with the specified chat event and broker metadata.
-    /// </summary>
-    /// <param name="chatEvent">
-    /// The base chat event containing message information.
-    /// Must not be null.
-    /// </param>
-    /// <param name="partition">
-    /// The broker partition to which the event was written.
-    /// Must be non-negative.
-    /// </param>
-    /// <param name="offset">
-    /// The broker offset for the message within its partition.
-    /// Must be non-negative.
-    /// </param>
-    /// <remarks>
-    /// This constructor creates a complete enriched event with both the chat
-    /// message data and the messaging infrastructure metadata. Use this when
-    /// consuming events from a message broker or similar streaming platforms.
-    /// </remarks>
-    public EnrichedChatEventDto(ChatEventDto chatEvent, int partition, long offset)
-    {
-        ChatEvent = chatEvent;
-        Partition = partition;
-        Offset = offset;
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="EnrichedChatEventDto"/> record
-    /// using the default parameterless constructor for record serialization support.
-    /// </summary>
-    /// <remarks>
-    /// This parameterless constructor exists to support serialization frameworks
-    /// that require a parameterless constructor. When using this constructor,
-    /// ensure that all required properties are set before using the instance.
-    /// </remarks>
-    public EnrichedChatEventDto() { }
-}
+/// <param name="ChatEvent">
+/// The base chat event containing message information.
+/// Must not be null.
+/// </param>
+/// <param name="Partition">
+/// The broker partition to which the event was written.
+/// Must be non-negative.
+/// </param>
+/// <param name="Offset">
+/// The broker offset for the message within its partition.
+/// Must be non-negative.
+/// </param>
+public record EnrichedChatEventDto(
+    ChatEventDto ChatEvent,
+    int Partition,
+    long Offset);

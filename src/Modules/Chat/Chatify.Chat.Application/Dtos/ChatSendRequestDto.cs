@@ -9,14 +9,14 @@ namespace Chatify.Chat.Application.Dtos;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scope Context:</b> The combination of <see cref="ScopeType"/> and
-/// <see cref="ScopeId"/> defines the conversation context where the message
+/// <b>Scope Context:</b> The combination of <see cref="ChatSendRequestDto.ScopeType"/> and
+/// <see cref="ChatSendRequestDto.ScopeId"/> defines the conversation context where the message
 /// will be sent. All messages sharing the same scope are ordered together
 /// to maintain conversation integrity.
 /// </para>
 /// <para>
-/// <b>Validation:</b> The <see cref="Text"/> property is subject to domain
-/// policy validation as defined by <see cref="Domain.ChatDomainPolicy"/>.
+/// <b>Validation:</b> The <see cref="ChatSendRequestDto.Text"/> property is subject to domain
+/// policy validation as defined by <see cref="ChatDomainPolicy"/>.
 /// Messages exceeding the maximum length will be rejected before processing.
 /// </para>
 /// <para>
@@ -63,7 +63,7 @@ public record ChatSendRequestDto
     /// and ScopeId are ordered together to maintain conversation integrity.
     /// </para>
     /// <para>
-    /// This value must pass validation by <see cref="Domain.ChatDomainPolicy.ValidateScopeId"/>
+    /// This value must pass validation by <see cref="ChatDomainPolicy.ValidateScopeId"/>
     /// before the message is processed. The validation enforces length constraints
     /// (1-256 characters) and ensures the value is not whitespace-only.
     /// </para>
@@ -81,7 +81,7 @@ public record ChatSendRequestDto
     /// <remarks>
     /// <para>
     /// <b>Length Constraints:</b> Message text is subject to the maximum length
-    /// defined by <see cref="Domain.ChatDomainPolicy.MaxTextLength"/> (4096 characters).
+    /// defined by <see cref="ChatDomainPolicy.MaxTextLength"/> (4096 characters).
     /// Messages exceeding this limit will be rejected during validation.
     /// </para>
     /// <para>

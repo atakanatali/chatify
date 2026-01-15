@@ -118,7 +118,7 @@ public interface IChatHistoryRepository
     /// </param>
     /// <returns>
     /// A read-only list of <see cref="ChatEventDto"/> representing messages
-    /// in the specified scope and time range, ordered by <see cref="CreatedAtUtc"/>
+    /// in the specified scope and time range, ordered by <see cref="ChatEventDto.CreatedAtUtc"/>
     /// in ascending order (oldest first).
     /// </returns>
     /// <exception cref="ArgumentNullException">
