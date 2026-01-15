@@ -266,12 +266,12 @@ public sealed class GlobalExceptionHandlingMiddleware
     {
         return exception switch
         {
-            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
             ArgumentNullException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
             UnauthorizedAccessException => ((int)HttpStatusCode.Unauthorized, "Unauthorized"),
             KeyNotFoundException => ((int)HttpStatusCode.NotFound, "Not Found"),
             InvalidOperationException => ((int)HttpStatusCode.Conflict, "Conflict"),
             TimeoutException => ((int)HttpStatusCode.GatewayTimeout, "Gateway Timeout"),
+            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
             _ => ((int)HttpStatusCode.InternalServerError, "Internal Server Error")
         };
     }

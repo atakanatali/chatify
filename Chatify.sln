@@ -14,7 +14,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.Infrastructure
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Chat.UnitTests", "tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj", "{EFEA2910-28C0-4334-9B2E-B39D8EF597B3}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.ChatApi.IntegrationTests", "tests/Chatify.ChatApi.IntegrationTests/Chatify.ChatApi.IntegrationTests.csproj", "{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Chatify.Api.IntegrationTests", "tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj", "{9876C173-71BC-4BD3-93F5-2EFC0BD17BFE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

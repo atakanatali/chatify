@@ -338,12 +338,12 @@ public sealed class ChatHubService : Hub
                 _logger.LogWarning(
                     "Message send failed for {SenderId}: {Error}",
                     senderId,
-                    result.Error.Message);
+                    result.Error?.Message ?? "Unknown error");
 
                 // Send error back to the client
                 await Clients.Caller.SendAsync(
                     "ReceiveError",
-                    result.Error.Message);
+                    result.Error?.Message ?? "An error occurred");
             }
         }
         catch (Exception ex)
