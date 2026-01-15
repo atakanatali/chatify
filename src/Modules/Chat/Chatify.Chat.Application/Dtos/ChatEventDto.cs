@@ -15,8 +15,8 @@ namespace Chatify.Chat.Application.Dtos;
 /// Each event represents an immutable fact that a message was sent at a specific time.
 /// </para>
 /// <para>
-/// <b>Scope-Based Ordering:</b> Events with the same <see cref="ScopeType"/>
-/// and <see cref="ScopeId"/> are ordered together by <see cref="CreatedAtUtc"/>
+/// <b>Scope-Based Ordering:</b> Events with the same <see cref="ChatEventDto.ScopeType"/>
+/// and <see cref="ChatEventDto.ScopeId"/> are ordered together by <see cref="ChatEventDto.CreatedAtUtc"/>
 /// to ensure all participants see messages in the same chronological sequence.
 /// This is critical for maintaining conversation coherence.
 /// </para>

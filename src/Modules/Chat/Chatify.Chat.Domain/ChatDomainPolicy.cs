@@ -105,7 +105,7 @@ public static class ChatDomainPolicy
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="scopeId"/> is empty, consists only of whitespace,
-    /// or exceeds the maximum allowable length defined by <see cref="MaxScopeIdLength"/>.
+    /// or exceeds the maximum allowable length defined by <see cref="ChatDomainPolicy.MaxScopeIdLength"/>.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -113,7 +113,7 @@ public static class ChatDomainPolicy
     /// <list type="bullet">
     /// <item>Must not be null.</item>
     /// <item>Must not be empty or whitespace-only.</item>
-    /// <item>Length must be between <see cref="MinScopeIdLength"/> and <see cref="MaxScopeIdLength"/> characters.</item>
+    /// <item>Length must be between <see cref="ChatDomainPolicy.MinScopeIdLength"/> and <see cref="ChatDomainPolicy.MaxScopeIdLength"/> characters.</item>
     /// </list>
     /// </para>
     /// <para>
@@ -162,14 +162,14 @@ public static class ChatDomainPolicy
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="text"/> exceeds the maximum allowable length
-    /// defined by <see cref="MaxTextLength"/>.
+    /// defined by <see cref="ChatDomainPolicy.MaxTextLength"/>.
     /// </exception>
     /// <remarks>
     /// <para>
     /// <b>Validation Rules:</b>
     /// <list type="bullet">
     /// <item>Must not be null.</item>
-    /// <item>Length must not exceed <see cref="MaxTextLength"/> characters.</item>
+    /// <item>Length must not exceed <see cref="ChatDomainPolicy.MaxTextLength"/> characters.</item>
     /// <item>Empty strings are permitted (for messages with only attachments, etc.).</item>
     /// <item>Whitespace-only strings are permitted.</item>
     /// </list>
@@ -217,7 +217,7 @@ public static class ChatDomainPolicy
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="senderId"/> is empty, consists only of whitespace,
-    /// or exceeds the maximum allowable length defined by <see cref="MaxSenderIdLength"/>.
+    /// or exceeds the maximum allowable length defined by <see cref="ChatDomainPolicy.MaxSenderIdLength"/>.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -225,7 +225,7 @@ public static class ChatDomainPolicy
     /// <list type="bullet">
     /// <item>Must not be null.</item>
     /// <item>Must not be empty or whitespace-only.</item>
-    /// <item>Length must be between <see cref="MinSenderIdLength"/> and <see cref="MaxSenderIdLength"/> characters.</item>
+    /// <item>Length must be between <see cref="ChatDomainPolicy.MinSenderIdLength"/> and <see cref="ChatDomainPolicy.MaxSenderIdLength"/> characters.</item>
     /// </list>
     /// </para>
     /// <para>
@@ -275,7 +275,7 @@ public static class ChatDomainPolicy
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when <paramref name="originPodId"/> is empty, consists only of whitespace,
-    /// or exceeds the maximum allowable length defined by <see cref="MaxOriginPodIdLength"/>.
+    /// or exceeds the maximum allowable length defined by <see cref="ChatDomainPolicy.MaxOriginPodIdLength"/>.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -283,7 +283,7 @@ public static class ChatDomainPolicy
     /// <list type="bullet">
     /// <item>Must not be null.</item>
     /// <item>Must not be empty or whitespace-only.</item>
-    /// <item>Length must be between <see cref="MinOriginPodIdLength"/> and <see cref="MaxOriginPodIdLength"/> characters.</item>
+    /// <item>Length must be between <see cref="ChatDomainPolicy.MinOriginPodIdLength"/> and <see cref="ChatDomainPolicy.MaxOriginPodIdLength"/> characters.</item>
     /// </list>
     /// </para>
     /// <para>
