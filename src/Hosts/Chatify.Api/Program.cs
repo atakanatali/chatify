@@ -28,6 +28,9 @@ builder.Services.AddChatifyChatApplication();
 builder.Services.AddControllers();
 builder.Services.AddSignalR();
 
+// Background Services
+builder.Services.AddHostedService<BackgroundServices.ChatBroadcastBackgroundService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
