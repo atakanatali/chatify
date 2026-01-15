@@ -124,7 +124,7 @@ public class RateLimitService : IRateLimitService
     /// <item>Use a Lua script to atomically check and increment the counter</item>
     /// <item>Remove entries outside the sliding window before counting</item>
     /// <item>Add the current timestamp to the sorted set</item>
-    /// <item>Return success if count <= threshold, failure otherwise</item>
+    /// <item>Return success if count &lt;= threshold, failure otherwise</item>
     /// <item>Set TTL on the key to window duration for auto-cleanup</item>
     /// </list>
     /// </para>
