@@ -106,8 +106,8 @@ public static class Program
                 loggerConfiguration
                     .ReadFrom.Configuration(context.Configuration)
                     .Enrich.FromLogContext()
-                    .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName)
                     .Enrich.WithMachineName()
+                    .Enrich.WithEnvironmentName()
                     .Enrich.WithProcessId()
                     .Enrich.WithThreadId()
                     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}")
