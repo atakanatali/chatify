@@ -14,5 +14,7 @@
     <PackageReference Include="StackExchange.Redis" />
     <!-- DataStax C# driver for Cassandra/ScyllaDB persistence -->
     <PackageReference Include="CassandraCSharpDriver" />
+    <!-- Polly for resilience and retry policies -->
+    <PackageReference Include="Polly" />
   </ItemGroup>
 </Project>

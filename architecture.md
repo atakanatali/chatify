@@ -271,6 +271,205 @@ builder.Services.AddHostedService<BackgroundServices.ChatBroadcastBackgroundServ
 
 ---
 
+#### History Writer Consumer (Persistence)
+**Purpose:** Consumes chat events from Kafka and persists them to ScyllaDB for durable chat history storage. Multiple pods share the workload through a shared consumer group.
+
+**Architecture:** The history writer follows SOLID principles with clear separation of concerns:
+- **`ChatHistoryWriterBackgroundService`** (Host layer) - Orchestrates message consumption and coordinates components
+- **`IKafkaConsumerFactory`** (Infrastructure) - Creates and configures Kafka consumers
+- **`IChatEventProcessor`** (Infrastructure) - Handles deserialization, validation, and persistence with retry logic
+- **`ExponentialBackoff`** (BuildingBlocks) - Provides backoff calculations for error scenarios
+
+**Implementation Locations:**
+- Background Service: `src/Hosts/Chatify.Api/BackgroundServices/ChatHistoryWriterBackgroundService.cs`
+- Factory: `src/Modules/Chat/Chatify.Chat.Infrastructure/Services/KafkaConsumers/`
+- Processor: `src/Modules/Chat/Chatify.Chat.Infrastructure/Services/ChatHistory/ChatEventProcessing/`
+
+**Consumer Configuration:**
+- **Group ID:** Configured via `Chatify.ChatHistoryWriter.ConsumerGroupId` (default: `chatify-chat-history-writer`)
+- **Auto Offset Reset:** `earliest` - New consumers start from the beginning of the topic
+- **Auto Commit:** `false` - Manual commit after successful persistence for at-least-once delivery
+- **Fetch Settings:** Low latency (1 byte min, 100ms max wait) for real-time processing
+
+**Shared Consumer Group Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Shared Consumer Group Architecture                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Kafka Topic: "chat-events" (3 partitions)                                 │
+│     ├─ Partition 0 ─────────────────────────────────────────────┐           │
+│     ├─ Partition 1 ──┐                                          │           │
+│     └─ Partition 2 ──┼──────────────────────────────────────────┤           │
+│                     │          │            │                    │           │
+│                     │          │            │                    │           │
+│                     ▼          ▼            ▼                    │           │
+│              ┌─────────────────────────────────────────┐         │           │
+│              │      Consumer Group:                     │         │           │
+│              │      "chatify-chat-history-writer"       │         │           │
+│              │                                         │         │           │
+│              │  Partitions are distributed among        │         │           │
+│              │  active consumers via rebalancing        │         │           │
+│              └─────────────────────────────────────────┘         │           │
+│                     │          │            │                    │           │
+│       ┌───────────┴──────┐  ┌─┴──────────┐  ┌─┴──────────┐     │           │
+│       │                  │  │            │  │            │     │           │
+│       ▼                  ▼  ▼            ▼  ▼            ▼     │           │
+│  ┌─────────┐        ┌─────────┐    ┌─────────┐    ┌─────────┐   │           │
+│  │ Pod A   │        │ Pod B   │    │ Pod C   │    │ Pod N   │   │           │
+│  │ Owns:   │        │ Owns:   │    │ Owns:   │    │ Owns:   │   │           │
+│  │ Part 0  │        │ Part 1  │    │ Part 2  │    │ (standby)│   │           │
+│  └────┬────┘        └────┬────┘    └────┬────┘    └────┬────┘   │           │
+│       │                  │            │            │         │           │
+│       │ Write to        │ Write to   │ Write to   │         │           │
+│       ▼                  ▼            ▼            ▼         │           │
+│  ┌─────────┐        ┌─────────┐    ┌─────────┐    ┌─────────┐   │           │
+│  │ScyllaDB │        │ScyllaDB │    │ScyllaDB │    │ScyllaDB │   │           │
+│  │(Idempot-│        │(Idempot- │    │(Idempot-│    │(Idempot-│   │           │
+│  │ ent)    │        │ ent)     │    │ ent)    │    │ ent)    │   │           │
+│  └─────────┘        └─────────┘    └─────────┘    └─────────┘   │           │
+│                                                                 │           │
+│  Key Characteristics:                                              │           │
+│  - All pods use the SAME consumer group ID                       │           │
+│  - Each partition is owned by ONE consumer at a time             │           │
+│  - Workload is automatically distributed via rebalancing         │           │
+│  - Adding pods increases throughput (up to partition count)       │           │
+│  - Idempotent writes prevent duplicates on retry                 │           │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────┘           │
+                                                                             │
+```
+
+**Processing Pipeline (Refactored Architecture):**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Message Persistence Pipeline (SOLID)                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  KAFKA                                                                      │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Partition: 0, Offset: 1234                                     │    │
+│     │  Key: "general" | Value: {ChatEventDto JSON}                    │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │          ChatHistoryWriterBackgroundService (Orchestrator)          │   │
+│  │  ─────────────────────────────────────────────────────────────────  │   │
+│  │  Responsibilities:                                                   │   │
+│  │  - Consume messages from Kafka                                      │   │
+│  │  - Delegate processing to IChatEventProcessor                       │   │
+│  │  - Commit offsets based on ProcessResultEntity                      │   │
+│  │  - Apply backoff on consumer errors                                 │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │              IChatEventProcessor (Business Logic)                   │   │
+│  │  ─────────────────────────────────────────────────────────────────  │   │
+│  │  Responsibilities:                                                   │   │
+│  │  - Deserialize JSON to ChatEventDto                                 │   │
+│  │  - Validate message structure                                       │   │
+│  │  - Apply Polly retry for transient DB errors                        │   │
+│  │  - Return ProcessResultEntity (Success/PermanentFailure)            │   │
+│  │                                                                     │   │
+│  │  Error Handling:                                                    │   │
+│  │  - Permanent errors (deserialize, validation) → Return PermanentFailure│   │
+│  │  - Transient errors (DB timeout, network) → Retry via Polly, then throw│   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    ChatHistoryRepository                            │   │
+│  │  ─────────────────────────────────────────────────────────────────  │   │
+│  │  INSERT INTO chat_messages (...) VALUES (?, ?, ...)                 │   │
+│  │  IF NOT EXISTS;  // Lightweight Transaction (Idempotent)            │   │
+│  │                                                                      │   │
+│  │  Returns: [applied] = true (inserted) or false (duplicate)          │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  SCYLLADB                                                                    │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Table: chat_messages                                           │    │
+│     │  PK: (scope_id, created_at_utc, message_id)                     │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Commit Strategy (Refactored):**
+| Scenario | Action | Rationale |
+|----------|--------|-----------|
+| **Success** | Commit offset | Message successfully processed |
+| **Permanent Failure** | Commit offset | Prevent poison message replay (DLQ in future) |
+| **Transient Error** | Do NOT commit | Message will be redelivered for retry |
+
+**Configuration Options:** `Chatify.ChatHistoryWriter`
+```json
+{
+  "Chatify": {
+    "ChatHistoryWriter": {
+      "ConsumerGroupId": "chatify-chat-history-writer",
+      "DatabaseRetryMaxAttempts": 5,
+      "DatabaseRetryBaseDelayMs": 100,
+      "DatabaseRetryMaxDelayMs": 10000,
+      "DatabaseRetryJitterMs": 100,
+      "ConsumerBackoffInitialMs": 1000,
+      "ConsumerBackoffMaxMs": 16000,
+      "MaxPayloadLogBytes": 256
+    }
+  }
+}
+```
+
+**DI Extension:** `ServiceCollectionChatHistoryWriterExtensions.AddChatHistoryWriter(IConfiguration)`
+
+**Registered Services:**
+- `ChatHistoryWriterOptionsEntity` (singleton) - Configuration options
+- `IKafkaConsumerFactory` → `KafkaConsumerFactory` (singleton) - Creates Kafka consumers
+- `IChatEventProcessor` → `ChatEventProcessor` (singleton) - Processes messages with retry
+
+**Idempotency Strategy:**
+- The repository uses lightweight transactions (LWT): `INSERT IF NOT EXISTS`
+- When a message is retried, the database silently ignores the duplicate
+- The `[applied]` flag indicates whether the insert was new or skipped
+- This ensures exactly-once semantics even with at-least-once delivery
+
+**Retry Strategy (Polly in ChatEventProcessor):**
+- **Transient Errors:** Network issues, timeouts, temporary unavailability
+- **Policy:** Exponential backoff with jitter (100ms base → 10s max)
+- **Max Attempts:** Configurable (default: 5)
+- **Jitter:** Configurable (default: 0-100ms) to prevent thundering herd
+- **On Exhausted Retries:** Exception thrown; consumer applies backoff and retries
+
+**Poison Message Handling:**
+- Deserialization/validation errors return `ProcessResultEntity.PermanentFailure`
+- Background service commits offset to skip the message
+- Future enhancement: Write to dead-letter queue (DLQ) topic for analysis
+
+**Ordering Guarantees:**
+- **Within a ScopeId (Partition):** Messages are processed in strict order by offset
+- **Across ScopeIds:** No ordering guarantee - different scopes can be processed in parallel
+- **At-Least-Once Delivery:** Duplicate processing possible; idempotency prevents data corruption
+
+**Error Handling:**
+- **Consume exceptions:** Logged to Elasticsearch, service continues with exponential backoff
+- **Permanent failures:** Logged, offset committed to prevent infinite replay
+- **Transient failures:** Retried by processor; on exhaustion, consumer applies backoff
+- **Commit exceptions:** Logged but do not prevent consumption (uncommitted offset causes retry)
+- **Initial connection failures:** Trigger retry with backoff, eventually let Kubernetes restart
+- **Graceful shutdown:** Commits final offsets and closes consumer properly
+
+**Background Service Registration:**
+```csharp
+// In Program.cs (Chatify.Api)
+builder.Services.AddChatHistoryWriter(Configuration); // Register factory, processor, options
+builder.Services.AddHostedService<ChatHistoryWriterBackgroundService>();
+```
+
+---
+
 #### Redis (Presence, Rate Limiting, Caching)
 **Purpose:** Manages user presence, enforces rate limits, and provides distributed caching.
 
