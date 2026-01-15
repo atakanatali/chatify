@@ -1,6 +1,3 @@
-using System.Net;
-using Microsoft.AspNetCore.Mvc;
-
 namespace Chatify.BuildingBlocks.Primitives;
 
 /// <summary>
@@ -101,7 +98,7 @@ public static class ExceptionMappingUtility
     /// When true, additional debug information may be included in the response.
     /// </param>
     /// <returns>
-    /// A <see cref="ProblemDetails"/> object containing the mapped error information.
+    /// A <see cref="ProblemDetailsEntity"/> object containing the mapped error information.
     /// </returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="exception"/> is null.
@@ -133,7 +130,7 @@ public static class ExceptionMappingUtility
     /// </list>
     /// </para>
     /// </remarks>
-    public static ProblemDetails MapToProblemDetails(
+    public static ProblemDetailsEntity MapToProblemDetails(
         Exception exception,
         string? instance,
         bool isDevelopment)
@@ -142,7 +139,7 @@ public static class ExceptionMappingUtility
 
         var (statusCode, title) = GetStatusCodeAndTitle(exception);
 
-        var problemDetails = new ProblemDetails
+        var problemDetails = new ProblemDetailsEntity
         {
             Type = $"{Rfc7231BaseUri}{GetStatusCodeSection(statusCode)}",
             Title = title,
@@ -203,13 +200,13 @@ public static class ExceptionMappingUtility
     {
         return exception switch
         {
-            UnauthorizedAccessException => ((int)HttpStatusCode.Unauthorized, "Unauthorized"),
-            KeyNotFoundException => ((int)HttpStatusCode.NotFound, "Not Found"),
-            InvalidOperationException => ((int)HttpStatusCode.Conflict, "Conflict"),
-            TimeoutException => ((int)HttpStatusCode.GatewayTimeout, "Gateway Timeout"),
-            ArgumentNullException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
-            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
-            _ => ((int)HttpStatusCode.InternalServerError, "Internal Server Error")
+            UnauthorizedAccessException => (401, "Unauthorized"),
+            KeyNotFoundException => (404, "Not Found"),
+            InvalidOperationException => (409, "Conflict"),
+            TimeoutException => (504, "Gateway Timeout"),
+            ArgumentNullException => (400, "Bad Request"),
+            ArgumentException => (400, "Bad Request"),
+            _ => (500, "Internal Server Error")
         };
     }
 
@@ -258,11 +255,11 @@ public static class ExceptionMappingUtility
 
         return statusCode switch
         {
-            (int)HttpStatusCode.BadRequest => "The request was invalid or missing required parameters.",
-            (int)HttpStatusCode.Unauthorized => "Authentication is required to access this resource.",
-            (int)HttpStatusCode.NotFound => "The requested resource was not found.",
-            (int)HttpStatusCode.Conflict => "The request could not be completed due to a conflict.",
-            (int)HttpStatusCode.GatewayTimeout => "The request timed out while processing.",
+            400 => "The request was invalid or missing required parameters.",
+            401 => "Authentication is required to access this resource.",
+            404 => "The requested resource was not found.",
+            409 => "The request could not be completed due to a conflict.",
+            504 => "The request timed out while processing.",
             _ => GenericServerError
         };
     }
@@ -306,15 +303,15 @@ public static class ExceptionMappingUtility
     {
         return statusCode switch
         {
-            (int)HttpStatusCode.BadRequest => "6.5.1",
-            (int)HttpStatusCode.Unauthorized => "6.5.2",
-            (int)HttpStatusCode.Forbidden => "6.5.3",
-            (int)HttpStatusCode.NotFound => "6.5.4",
-            (int)HttpStatusCode.Conflict => "6.5.8",
-            (int)HttpStatusCode.InternalServerError => "6.6.1",
-            (int)HttpStatusCode.BadGateway => "6.6.3",
-            (int)HttpStatusCode.ServiceUnavailable => "6.6.4",
-            (int)HttpStatusCode.GatewayTimeout => "6.6.5",
+            400 => "6.5.1",
+            401 => "6.5.2",
+            403 => "6.5.3",
+            404 => "6.5.4",
+            409 => "6.5.8",
+            500 => "6.6.1",
+            502 => "6.6.3",
+            503 => "6.6.4",
+            504 => "6.6.5",
             _ => "6.6.1"
         };
     }

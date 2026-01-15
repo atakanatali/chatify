@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Chatify.BuildingBlocks.Primitives;
-using Microsoft.AspNetCore.Mvc;
 
 namespace Chatify.Api.Middleware;
 
