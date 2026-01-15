@@ -11,7 +11,5 @@
   <ItemGroup>
     <!-- Configuration options binding - version managed centrally in Directory.Packages.props -->
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
-    <!-- Logging - version managed centrally in Directory.Packages.props -->
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>
