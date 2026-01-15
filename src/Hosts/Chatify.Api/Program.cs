@@ -4,393 +4,76 @@ using Chatify.Chat.Application.DependencyInjection;
 using Chatify.Api.Hubs;
 using Chatify.Api.Middleware;
 using Serilog;
-using Serilog.Sinks.Elasticsearch;
 
 namespace Chatify.Api;
 
-/// <summary>
-/// The entry point for the Chatify API application.
-/// </summary>
-/// <remarks>
-/// <para>
-/// <b>Purpose:</b> This class contains the application entry point and
-/// initializes the ASP.NET Core host with all required services, middleware,
-/// and infrastructure providers.
-/// </para>
-/// <para>
-/// <b>Architecture:</b> Chatify follows Clean Architecture with a modular
-/// monolith design. The Program.cs orchestrates the dependency injection
-/// container by calling extension methods from the Application and Infrastructure
-/// layers.
-/// </para>
-/// <para>
-/// <b>Provider Registration:</b> Infrastructure providers are registered via
-/// their respective DI extension methods in the following order:
-/// <list type="bullet">
-/// <item>Logging (must be registered first for Serilog configuration)</item>
-/// <item>Database (persistent storage)</item>
-/// <item>Caching (presence, rate limiting, pod identity)</item>
-/// <item>MessageBroker (message streaming)</item>
-/// <item>Application layer services (command handlers, application services)</item>
-/// </list>
-/// </para>
-/// <para>
-/// <b>Configuration:</b> The application loads configuration from multiple
-/// sources in the following order (later sources override earlier ones):
-/// <list type="bullet">
-/// <item>appsettings.json (base configuration)</item>
-/// <item>appsettings.{Environment}.json (environment-specific)</item>
-/// <item>Environment variables</item>
-/// <item>Command line arguments</item>
-/// </list>
-/// </para>
-/// <para>
-/// <b>Logging:</b> Serilog is configured as the logging provider with the
-/// Elasticsearch sink. Logs are written to the console for immediate feedback
-/// and to Elasticsearch for long-term storage and analysis.
-/// </para>
-/// </remarks>
 public static class Program
 {
-    /// <summary>
-    /// The main entry point for the application.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This method builds the web host and runs the application. It uses
-    /// the <see cref="Host"/> builder pattern to configure services,
-    /// middleware, and the application pipeline.
-    /// </para>
-    /// </remarks>
     public static void Main(string[] args)
     {
-        // Build the host and run the application
-        // The host builder pattern allows for fine-grained control over
-        // dependency injection, configuration, logging, and middleware
-        var host = CreateHostBuilder(args).Build();
-
-        // Run the application (blocks until shutdown)
-        host.Run();
+        CreateHostBuilder(args).Build().Run();
     }
 
-    /// <summary>
-    /// Creates and configures the web host builder.
-    /// </summary>
-    /// <param name="args">
-    /// Command line arguments passed to the application.
-    /// </param>
-    /// <returns>
-    /// A configured <see cref="IHost"/> instance ready to run.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// <b>Configuration:</b> This method configures the host with:
-    /// <list type="bullet">
-    /// <item>Default configuration providers (appsettings, environment variables)</item>
-    /// <item>Serilog as the logging provider</item>
-    /// <item>Kestrel as the web server</item>
-    /// <item>All required infrastructure and application services</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Service Registration Order:</b>
-    /// <list type="number">
-    /// <item>BuildingBlocks (clock, correlation)</item>
-    /// <item>Logging options (for Serilog configuration)</item>
-    /// <item>Infrastructure providers (Database, Caching, MessageBroker)</item>
-    /// <item>Application services (command handlers)</item>
-    /// </list>
-    /// </para>
-    /// </remarks>
     public static IHostBuilder CreateHostBuilder(string[] args) =>
         Host.CreateDefaultBuilder(args)
-            // Configure Serilog to use the Elasticsearch sink
-            // This must be done early to capture all startup logs
-            .UseSerilog((context, services, loggerConfiguration) =>
+            .UseSerilog((context, loggerConfiguration) =>
             {
-                // Read logging options directly from configuration
-                var loggingSection = context.Configuration.GetSection("Chatify:Logging");
-                var loggingOptions = loggingSection.Get<LoggingOptionsEntity>()
-                    ?? new LoggingOptionsEntity();
-
                 loggerConfiguration
                     .ReadFrom.Configuration(context.Configuration)
-                    .Enrich.FromLogContext()
-                    .Enrich.WithMachineName()
-                    .Enrich.WithEnvironmentName()
-                    .Enrich.WithProcessId()
-                    .Enrich.WithThreadId()
-                    .Enrich.WithProperty("Application", "Chatify.ChatApi")
-                    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
-
-                // Only configure Elasticsearch sink if valid configuration is provided
-                if (loggingOptions.IsValid())
-                {
-                    loggerConfiguration.WriteTo.Elasticsearch(new[] { new Uri(loggingOptions.Uri) }, options =>
-                    {
-                        options.DataStream = new Elastic.Ingest.Elasticsearch.DataStreams.DataStreamName(loggingOptions.IndexPrefix, "date");
-                        options.BootstrapMethod = Elastic.Ingest.Elasticsearch.ElasticsearchIngestBootstrapMethod.Failure;
-                        options.ConfigureChannel = channelOptions =>
-                        {
-                            channelOptions.BufferOptions = new Elastic.Ingest.Elasticsearch.ElasticsearchBufferOptions
-                            {
-                                ExportMaxConcurrency = 1
-                            };
-                        };
-
-                        // Add authentication if configured
-                        if (!string.IsNullOrWhiteSpace(loggingOptions.Username) && !string.IsNullOrWhiteSpace(loggingOptions.Password))
-                        {
-                            options.Authentication = new Elastic.Clients.Elasticsearch.Core.BasicAuthentication(
-                                loggingOptions.Username,
-                                loggingOptions.Password);
-                        }
-                    });
-                }
+                    .ConfigureChatifySerilog(context.Configuration);
             })
             .ConfigureWebHostDefaults(webBuilder =>
             {
                 webBuilder.UseStartup<Startup>();
             });
 
-    /// <summary>
-    /// Configures the application services and middleware pipeline.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Startup Class:</b> This class is automatically discovered and instantiated
-    /// by the ASP.NET Core hosting layer. It contains two key methods:
-    /// <list type="bullet">
-    /// <item><see cref="ConfigureServices"/> - Registers services in the DI container</item>
-    /// <item><see cref="Configure"/> - Configures the HTTP request pipeline</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// The Startup class separates service registration from middleware configuration,
-    /// making the code more organized and testable.
-    /// </para>
-    /// </remarks>
     public class Startup
     {
-        /// <summary>
-        /// Gets the application configuration.
-        /// </summary>
-        /// <remarks>
-        /// This configuration is populated from appsettings.json, environment
-        /// variables, and other configuration providers. It is used throughout
-        /// the application to access strongly-typed settings.
-        /// </remarks>
         public IConfiguration Configuration { get; }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="Startup"/> class.
-        /// </summary>
-        /// <param name="configuration">
-        /// The application configuration. Automatically provided by the host.
-        /// </param>
-        /// <remarks>
-        /// The constructor is called by the hosting layer and receives the
-        /// fully-populated configuration object.
-        /// </remarks>
         public Startup(IConfiguration configuration)
         {
             Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
-        /// <summary>
-        /// Configures the application's dependency injection container.
-        /// </summary>
-        /// <param name="services">
-        /// The service collection to register services with.
-        /// </param>
-        /// <remarks>
-        /// <para>
-        /// <b>Service Registration:</b> This method registers all application
-        /// and infrastructure services in the DI container. The order of
-        /// registration matters:
-        /// </para>
-        /// <para>
-        /// <b>1. BuildingBlocks:</b>
-        /// <list type="bullet">
-        /// <item>IClockService - System clock abstraction</item>
-        /// <item>ICorrelationContextAccessor - Async-local correlation ID storage</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>2. Infrastructure Options:</b>
-        /// <list type="bullet">
-        /// <item>Logging - Must be registered first for Serilog</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>3. Infrastructure Providers:</b>
-        /// <list type="bullet">
-        /// <item>Database - Chat history persistence (AddDatabase)</item>
-        /// <item>Caching - Presence, rate limiting, pod identity (AddCaching)</item>
-        /// <item>MessageBroker - Event streaming and messaging (AddMessageBroker)</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>4. Application Services:</b>
-        /// <list type="bullet">
-        /// <item>Command handlers - Application use case orchestration</item>
-        /// <item>Other application services - (added as needed)</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>Configuration:</b> All extension methods read from the
-        /// <see cref="Configuration"/> object, which loads settings from:
-        /// <list type="bullet">
-        /// <item>appsettings.json</item>
-        /// <item>appsettings.{Environment}.json</item>
-        /// <item>Environment variables</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>Required Configuration Sections:</b>
-        /// <list type="bullet">
-        /// <item>Chatify:Logging - Logging connection settings</item>
-        /// <item>Chatify:Database - Database connection settings</item>
-        /// <item>Chatify:Caching - Caching connection settings</item>
-        /// <item>Chatify:MessageBroker - Message broker connection settings</item>
-        /// </list>
-        /// </para>
-        /// </remarks>
         public void ConfigureServices(IServiceCollection services)
         {
-            // ============================================
-            // STEP 1: Register BuildingBlocks
-            // ============================================
-            // Clock and correlation services are foundational primitives
-            // used throughout the application
-
-            // System clock abstraction for time handling
+            // BuildingBlocks
             services.AddSingleton<IClockService, SystemClockService>();
-
-            // Async-local correlation ID storage for distributed tracing
             services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
-            // ============================================
-            // STEP 2: Register Infrastructure Options
-            // ============================================
-            // ILogService must be registered for application-level logging
-            services.AddLogging();
+            // Logging
+            services.AddChatifyLogging(Configuration);
 
-            // ============================================
-            // STEP 3: Register Infrastructure Providers
-            // ============================================
-            // Each provider extension reads its configuration and registers
-            // the necessary services for that infrastructure component
-
-            // Distributed Database: Chat message history persistence
-            // Registers: IChatHistoryRepository
+            // Infrastructure Providers
             services.AddDatabase(Configuration);
-
-            // Distributed Cache: Presence tracking, rate limiting, caching, pod identity
-            // Registers: IPresenceService, IRateLimitService, IPodIdentityService
             services.AddCaching(Configuration);
-
-            // Message Broker: Event streaming and async messaging
-            // Registers: IChatEventProducerService
             services.AddMessageBroker(Configuration);
 
-            // ============================================
-            // STEP 4: Register Application Services
-            // ============================================
-            // Application layer services depend on infrastructure services
-            // and must be registered after infrastructure
-
-            // Chat application: Command handlers and application services
+            // Application Services
             services.AddChatifyChatApplication();
 
-            // ============================================
-            // STEP 5: Register ASP.NET Core Services
-            // ============================================
-            // Add controllers, SignalR, and other ASP.NET Core services
+            // ASP.NET Core Services
             services.AddControllers();
             services.AddSignalR();
-
-            // Add health checks for infrastructure providers
-            // (will be added in future steps)
-            // services.AddHealthChecks()
-            //     .AddDatabaseHealthCheck(...)
-            //     .AddCachingHealthCheck(...)
-            //     .AddMessageBrokerHealthCheck(...);
         }
 
-        /// <summary>
-        /// Configures the HTTP request pipeline.
-        /// </summary>
-        /// <param name="app">
-        /// The application builder for configuring the middleware pipeline.
-        /// </param>
-        /// <param name="env">
-        /// Information about the hosting environment.
-        /// </param>
-        /// <remarks>
-        /// <para>
-        /// <b>Middleware Pipeline:</b> This method configures the middleware
-        /// pipeline that processes each HTTP request. Middleware is executed
-        /// in the order it is registered here.
-        /// </para>
-        /// <para>
-        /// <b>Middleware Order:</b>
-        /// <list type="number">
-        /// <item>Developer exception page (development only)</item>
-        /// <item>Global exception handling middleware (catches all exceptions)</item>
-        /// <item>Correlation ID middleware (ensures correlation ID for all requests)</item>
-        /// <item>Routing</item>
-        /// <item>Authorization</item>
-        /// <item>Endpoints (controllers, SignalR hubs)</item>
-        /// </list>
-        /// </para>
-        /// <para>
-        /// <b>Request Flow:</b>
-        /// <list type="number">
-        /// <item>Request arrives at server</item>
-        /// <item>Correlation ID middleware sets/validates correlation ID</item>
-        /// <item>Exception handling middleware wraps downstream execution</item>
-        /// <item>Routing determines endpoint (controller action or SignalR hub)</item>
-        /// <item>Authorization checks permissions</item>
-        /// <item>Endpoint processes request and returns response</item>
-        /// </list>
-        /// </para>
-        /// </remarks>
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             if (env.IsDevelopment())
             {
-                // Developer exception page shows detailed error information
-                // Only enable in development to avoid leaking sensitive information
                 app.UseDeveloperExceptionPage();
             }
 
-            // Global exception handling middleware - must be first (after developer page)
-            // This catches all unhandled exceptions and returns ProblemDetails
             app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
-
-            // Correlation ID middleware - must be early in the pipeline
-            // This ensures a correlation ID exists for every request
             app.UseMiddleware<CorrelationIdMiddleware>();
-
-            // Enable routing for controllers and SignalR hubs
             app.UseRouting();
-
-            // Authorization middleware must come after routing but before endpoints
             app.UseAuthorization();
 
-            // Configure the HTTP endpoints (controllers, SignalR hubs, etc.)
             app.UseEndpoints(endpoints =>
             {
-                // Map controller endpoints
                 endpoints.MapControllers();
-
-                // Map SignalR chat hub endpoint
-                // The path "/hubs/chat" is where clients connect for real-time messaging
                 endpoints.MapHub<ChatHubService>("/hubs/chat");
-
-                // Map health check endpoint (will be added in future steps)
-                // endpoints.MapHealthChecks("/health");
             });
         }
     }

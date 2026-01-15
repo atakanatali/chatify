@@ -1,3 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- All properties and package references are inherited from Directory.Build.props -->
+
+  <ItemGroup>
+    <!-- Serilog packages for logging - versions managed centrally in Directory.Packages.props -->
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.Elasticsearch" />
+  </ItemGroup>
 </Project>

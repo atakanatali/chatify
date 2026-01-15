@@ -1,5 +1,8 @@
 using Chatify.BuildingBlocks.Primitives;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using Serilog;
+using Serilog.Sinks.Elasticsearch;
 
 namespace Chatify.BuildingBlocks.DependencyInjection;
 
@@ -7,71 +10,73 @@ namespace Chatify.BuildingBlocks.DependencyInjection;
 /// Provides extension methods for configuring logging integration
 /// in the dependency injection container.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <b>Purpose:</b> This class contains extension methods that encapsulate
-/// the registration of <see cref="ILogService"/> for application-level logging.
-/// </para>
-/// <para>
-/// <b>Location:</b> This extension is placed in BuildingBlocks rather than the
-/// Observability module because logging is a fundamental cross-cutting primitive.
-/// </para>
-/// <para>
-/// <b>Usage Pattern:</b>
-/// <code><![CDATA[
-/// // In Program.cs ConfigureServices
-/// services.AddLogging();
-///
-/// // In Program.cs CreateHostBuilder (for Serilog)
-/// .UseSerilog((context, services, loggerConfiguration) =>
-/// {
-///     var loggingOptions = context.Configuration
-///         .GetSection("Chatify:Logging")
-///         .Get<LoggingOptionsEntity>();
-///
-///     loggerConfiguration
-///         .ReadFrom.Configuration(context.Configuration)
-///         .WriteTo.Console()
-///         .WriteTo.Elasticsearch(...);
-/// });
-/// ]]></code>
-/// </para>
-/// </remarks>
 public static class ServiceCollectionLoggingExtensions
 {
     /// <summary>
-    /// Registers the <see cref="ILogService"/> with the dependency injection container.
+    /// Registers the <see cref="ILogService"/> and configures Serilog with Elasticsearch sink.
     /// </summary>
-    /// <param name="services">
-    /// The <see cref="IServiceCollection"/> to add services to.
-    /// Must not be null.
-    /// </param>
-    /// <returns>
-    /// The same <see cref="IServiceCollection"/> instance so that multiple
-    /// calls can be chained.
-    /// </returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="services"/> is null.
-    /// </exception>
-    /// <remarks>
-    /// <para>
-    /// <b>Registered Services:</b> This method registers:
-    /// <list type="bullet">
-    /// <item><see cref="ILogService"/> as <see cref="LogService"/> (scoped)</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Service Lifetime:</b> Scoped - ensures correlation context is correctly
-    /// propagated within a request scope.
-    /// </para>
-    /// </remarks>
-    public static IServiceCollection AddLogging(this IServiceCollection services)
+    /// <param name="services">The service collection.</param>
+    /// <param name="configuration">The application configuration.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    public static IServiceCollection AddChatifyLogging(this IServiceCollection services, IConfiguration configuration)
     {
-        GuardUtility.NotNull(services);
-
-        // Register ILogService as scoped for proper correlation context propagation
+        // Register ILogService
         services.AddScoped<ILogService, LogService>();
 
+        // Register logging options for Serilog configuration
+        var loggingOptions = configuration.GetSection("Chatify:Logging").Get<LoggingOptionsEntity>()
+            ?? new LoggingOptionsEntity();
+
+        services.AddSingleton(loggingOptions);
+
         return services;
+    }
+
+    /// <summary>
+    /// Configures Serilog with Elasticsearch sink for Chatify.
+    /// </summary>
+    /// <param name="loggerConfiguration">The Serilog logger configuration.</param>
+    /// <param name="configuration">The application configuration.</param>
+    /// <returns>The configured logger configuration.</returns>
+    public static LoggerConfiguration ConfigureChatifySerilog(
+        this LoggerConfiguration loggerConfiguration,
+        IConfiguration configuration)
+    {
+        var loggingOptions = configuration.GetSection("Chatify:Logging").Get<LoggingOptionsEntity>()
+            ?? new LoggingOptionsEntity();
+
+        loggerConfiguration
+            .Enrich.FromLogContext()
+            .Enrich.WithMachineName()
+            .Enrich.WithEnvironmentName()
+            .Enrich.WithProcessId()
+            .Enrich.WithThreadId()
+            .Enrich.WithProperty("Application", "Chatify.ChatApi")
+            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
+
+        if (loggingOptions.IsValid())
+        {
+            loggerConfiguration.WriteTo.Elasticsearch(new[] { new Uri(loggingOptions.Uri) }, options =>
+            {
+                options.DataStream = new Elastic.Ingest.Elasticsearch.DataStreams.DataStreamName(loggingOptions.IndexPrefix, "date");
+                options.BootstrapMethod = Elastic.Ingest.Elasticsearch.ElasticsearchIngestBootstrapMethod.Failure;
+                options.ConfigureChannel = channelOptions =>
+                {
+                    channelOptions.BufferOptions = new Elastic.Ingest.Elasticsearch.ElasticsearchBufferOptions
+                    {
+                        ExportMaxConcurrency = 1
+                    };
+                };
+
+                if (!string.IsNullOrWhiteSpace(loggingOptions.Username) && !string.IsNullOrWhiteSpace(loggingOptions.Password))
+                {
+                    options.Authentication = new Elastic.Clients.Elasticsearch.Core.BasicAuthentication(
+                        loggingOptions.Username,
+                        loggingOptions.Password);
+                }
+            });
+        }
+
+        return loggerConfiguration;
     }
 }
