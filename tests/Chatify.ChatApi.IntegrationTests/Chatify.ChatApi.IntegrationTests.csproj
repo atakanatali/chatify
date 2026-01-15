@@ -12,6 +12,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Hosts/Chatify.ChatApi/Chatify.ChatApi.csproj" />
+    <ProjectReference Include="../../src/Hosts/Chatify.Api/Chatify.Api.csproj" />
   </ItemGroup>
 </Project>

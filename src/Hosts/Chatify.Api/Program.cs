@@ -1,11 +1,14 @@
+using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
 using Chatify.Chat.Infrastructure.DependencyInjection;
+using Chatify.Api.Hubs;
+using Chatify.Api.Middleware;
 using Serilog;
 
-namespace Chatify.ChatApi;
+namespace Chatify.Api;
 
 /// <summary>
-/// The entry point for the Chatify Chat API application.
+/// The entry point for the Chatify API application.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,10 +26,10 @@ namespace Chatify.ChatApi;
 /// <b>Provider Registration:</b> Infrastructure providers are registered via
 /// their respective DI extension methods in the following order:
 /// <list type="bullet">
-/// <item>Elasticsearch logging (must be registered first for Serilog configuration)</item>
-/// <item>ScyllaDB (persistent storage)</item>
-/// <item>Redis (caching, presence, rate limiting)</item>
-/// <item>Kafka (message streaming)</item>
+/// <item>Logging (must be registered first for Serilog configuration)</item>
+/// <item>Database (persistent storage)</item>
+/// <item>Caching (presence, rate limiting, pod identity)</item>
+/// <item>MessageBroker (message streaming)</item>
 /// <item>Application layer services (command handlers, application services)</item>
 /// </list>
 /// </para>
@@ -91,8 +94,9 @@ public static class Program
     /// <para>
     /// <b>Service Registration Order:</b>
     /// <list type="number">
-    /// <item>Elasticsearch options (for Serilog configuration)</item>
-    /// <item>Infrastructure providers (ScyllaDB, Redis, Kafka)</item>
+    /// <item>BuildingBlocks (clock, correlation)</item>
+    /// <item>Logging options (for Serilog configuration)</item>
+    /// <item>Infrastructure providers (Database, Caching, MessageBroker)</item>
     /// <item>Application services (command handlers)</item>
     /// </list>
     /// </para>
@@ -177,21 +181,28 @@ public static class Program
         /// registration matters:
         /// </para>
         /// <para>
-        /// <b>1. Infrastructure Options:</b>
+        /// <b>1. BuildingBlocks:</b>
         /// <list type="bullet">
-        /// <item>Elasticsearch - Must be registered first for Serilog</item>
+        /// <item>IClockService - System clock abstraction</item>
+        /// <item>ICorrelationContextAccessor - Async-local correlation ID storage</item>
         /// </list>
         /// </para>
         /// <para>
-        /// <b>2. Infrastructure Providers:</b>
+        /// <b>2. Infrastructure Options:</b>
         /// <list type="bullet">
-        /// <item>ScyllaDB - Chat history persistence</item>
-        /// <item>Redis - Presence, rate limiting, caching</item>
-        /// <item>Kafka - Event streaming and messaging</item>
+        /// <item>Logging - Must be registered first for Serilog</item>
         /// </list>
         /// </para>
         /// <para>
-        /// <b>3. Application Services:</b>
+        /// <b>3. Infrastructure Providers:</b>
+        /// <list type="bullet">
+        /// <item>Database - Chat history persistence (AddDatabase)</item>
+        /// <item>Caching - Presence, rate limiting, pod identity (AddCaching)</item>
+        /// <item>MessageBroker - Event streaming and messaging (AddMessageBroker)</item>
+        /// </list>
+        /// </para>
+        /// <para>
+        /// <b>4. Application Services:</b>
         /// <list type="bullet">
         /// <item>Command handlers - Application use case orchestration</item>
         /// <item>Other application services - (added as needed)</item>
@@ -209,42 +220,54 @@ public static class Program
         /// <para>
         /// <b>Required Configuration Sections:</b>
         /// <list type="bullet">
-        /// <item>Chatify:Elastic - Elasticsearch connection settings</item>
-        /// <item>Chatify:Scylla - ScyllaDB connection settings</item>
-        /// <item>Chatify:Redis - Redis connection settings</item>
-        /// <item>Chatify:Kafka - Kafka connection settings</item>
+        /// <item>Chatify:Logging - Logging connection settings</item>
+        /// <item>Chatify:Database - Database connection settings</item>
+        /// <item>Chatify:Caching - Caching connection settings</item>
+        /// <item>Chatify:MessageBroker - Message broker connection settings</item>
         /// </list>
         /// </para>
         /// </remarks>
         public void ConfigureServices(IServiceCollection services)
         {
             // ============================================
-            // STEP 1: Register Infrastructure Options
+            // STEP 1: Register BuildingBlocks
             // ============================================
-            // Elasticsearch options must be registered first so Serilog can
-            // use them for log shipping configuration
-            services.AddElasticsearchLogging(Configuration);
+            // Clock and correlation services are foundational primitives
+            // used throughout the application
+
+            // System clock abstraction for time handling
+            services.AddSingleton<IClockService, SystemClockService>();
+
+            // Async-local correlation ID storage for distributed tracing
+            services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
             // ============================================
-            // STEP 2: Register Infrastructure Providers
+            // STEP 2: Register Infrastructure Options
+            // ============================================
+            // Logging options must be registered first so Serilog can
+            // use them for log shipping configuration
+            services.AddLogging(Configuration);
+
+            // ============================================
+            // STEP 3: Register Infrastructure Providers
             // ============================================
             // Each provider extension reads its configuration and registers
             // the necessary services for that infrastructure component
 
             // Distributed Database: Chat message history persistence
             // Registers: IChatHistoryRepository
-            services.AddDistributedDatabase(Configuration);
+            services.AddDatabase(Configuration);
 
-            // Distributed Cache: Presence tracking, rate limiting, caching
-            // Registers: IPresenceService, IRateLimitService
-            services.AddDistributedCache(Configuration);
+            // Distributed Cache: Presence tracking, rate limiting, caching, pod identity
+            // Registers: IPresenceService, IRateLimitService, IPodIdentityService
+            services.AddCaching(Configuration);
 
             // Message Broker: Event streaming and async messaging
             // Registers: IChatEventProducerService
-            services.AddKafka(Configuration);
+            services.AddMessageBroker(Configuration);
 
             // ============================================
-            // STEP 3: Register Application Services
+            // STEP 4: Register Application Services
             // ============================================
             // Application layer services depend on infrastructure services
             // and must be registered after infrastructure
@@ -253,18 +276,18 @@ public static class Program
             services.AddChatifyChatApplication();
 
             // ============================================
-            // STEP 4: Register ASP.NET Core Services
+            // STEP 5: Register ASP.NET Core Services
             // ============================================
-            // Add controllers, SignalR, etc. (will be added in future steps)
+            // Add controllers, SignalR, and other ASP.NET Core services
             services.AddControllers();
             services.AddSignalR();
 
             // Add health checks for infrastructure providers
             // (will be added in future steps)
             // services.AddHealthChecks()
-            //     .AddScyllaHealthCheck(...)
-            //     .AddRedisHealthCheck(...)
-            //     .AddKafkaHealthCheck(...);
+            //     .AddDatabaseHealthCheck(...)
+            //     .AddCachingHealthCheck(...)
+            //     .AddMessageBrokerHealthCheck(...);
         }
 
         /// <summary>
@@ -283,22 +306,25 @@ public static class Program
         /// in the order it is registered here.
         /// </para>
         /// <para>
-        /// <b>Current Middleware:</b>
-        /// <list type="bullet">
+        /// <b>Middleware Order:</b>
+        /// <list type="number">
         /// <item>Developer exception page (development only)</item>
+        /// <item>Global exception handling middleware (catches all exceptions)</item>
+        /// <item>Correlation ID middleware (ensures correlation ID for all requests)</item>
         /// <item>Routing</item>
         /// <item>Authorization</item>
-        /// <item>Controllers</item>
-        /// <item>SignalR hubs (will be added in future steps)</item>
+        /// <item>Endpoints (controllers, SignalR hubs)</item>
         /// </list>
         /// </para>
         /// <para>
-        /// Additional middleware will be added as the application grows:
-        /// <list type="bullet">
-        /// <item>Correlation ID middleware</item>
-        /// <item>Request logging middleware</item>
-        /// <item>Rate limiting middleware</item>
-        /// <item>Authentication/authorization</item>
+        /// <b>Request Flow:</b>
+        /// <list type="number">
+        /// <item>Request arrives at server</item>
+        /// <item>Correlation ID middleware sets/validates correlation ID</item>
+        /// <item>Exception handling middleware wraps downstream execution</item>
+        /// <item>Routing determines endpoint (controller action or SignalR hub)</item>
+        /// <item>Authorization checks permissions</item>
+        /// <item>Endpoint processes request and returns response</item>
         /// </list>
         /// </para>
         /// </remarks>
@@ -310,6 +336,14 @@ public static class Program
                 // Only enable in development to avoid leaking sensitive information
                 app.UseDeveloperExceptionPage();
             }
+
+            // Global exception handling middleware - must be first (after developer page)
+            // This catches all unhandled exceptions and returns ProblemDetails
+            app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+
+            // Correlation ID middleware - must be early in the pipeline
+            // This ensures a correlation ID exists for every request
+            app.UseMiddleware<CorrelationIdMiddleware>();
 
             // Enable routing for controllers and SignalR hubs
             app.UseRouting();
@@ -323,8 +357,9 @@ public static class Program
                 // Map controller endpoints
                 endpoints.MapControllers();
 
-                // Map SignalR hubs (will be added in future steps)
-                // endpoints.MapHub<ChatHub>("/hubs/chat");
+                // Map SignalR chat hub endpoint
+                // The path "/hubs/chat" is where clients connect for real-time messaging
+                endpoints.MapHub<ChatHubService>("/hubs/chat");
 
                 // Map health check endpoint (will be added in future steps)
                 // endpoints.MapHealthChecks("/health");

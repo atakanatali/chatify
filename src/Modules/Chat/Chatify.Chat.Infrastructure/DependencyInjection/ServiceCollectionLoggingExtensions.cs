@@ -6,23 +6,22 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Chatify.Chat.Infrastructure.DependencyInjection;
 
 /// <summary>
-/// Provides extension methods for configuring Elasticsearch logging integration
+/// Provides extension methods for configuring logging integration
 /// in the dependency injection container.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Purpose:</b> This class contains extension methods that encapsulate
-/// the configuration of Elasticsearch for centralized log aggregation via Serilog.
+/// the configuration of centralized log aggregation via Serilog.
 /// This approach keeps the Program.cs clean and provides a single, discoverable
-/// location for Elasticsearch configuration.
+/// location for logging configuration.
 /// </para>
 /// <para>
-/// <b>Elasticsearch Integration:</b> Elasticsearch is used as the centralized
-/// log store for Chatify, providing:
+/// <b>Logging Integration:</b> Centralized logging is used as the log store for Chatify, providing:
 /// <list type="bullet">
 /// <item>Centralized log aggregation across all pods and services</item>
 /// <item>Powerful search and filtering of log data</item>
-/// <item>Visualization and monitoring via Kibana dashboards</item>
+/// <item>Visualization and monitoring via dashboards</item>
 /// <item>Alerting based on log patterns and error rates</item>
 /// <item>Long-term log retention and archival</item>
 /// </list>
@@ -31,19 +30,19 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// <b>Usage Pattern:</b>
 /// <code><![CDATA[
 /// // In Program.cs
-/// builder.Services.AddElasticsearchLogging(
+/// builder.Services.AddLogging(
 ///     builder.Configuration
 /// );
 /// ]]></code>
 /// </para>
 /// <para>
 /// <b>Configuration Section:</b> By default, this extension reads from the
-/// <c>"Chatify:Elastic"</c> configuration section. Ensure your appsettings.json
+/// <c>"Chatify:Logging"</c> configuration section. Ensure your appsettings.json
 /// or environment variables provide the required configuration:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Elastic": {
+///     "Logging": {
 ///       "Uri": "http://localhost:9200",
 ///       "Username": "elastic",
 ///       "Password": "changeme",
@@ -54,14 +53,14 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// ]]></code>
 /// </para>
 /// <para>
-/// <b>Note:</b> This extension only validates and stores the Elasticsearch options.
+/// <b>Note:</b> This extension only validates and stores the logging options.
 /// The actual Serilog sink configuration is done separately in the host setup.
 /// </para>
 /// </remarks>
-public static class ServiceCollectionElasticExtensions
+public static class ServiceCollectionLoggingExtensions
 {
     /// <summary>
-    /// Configures Chatify Elasticsearch logging options and registers them
+    /// Configures Chatify logging options and registers them
     /// with the dependency injection container.
     /// </summary>
     /// <param name="services">
@@ -69,7 +68,7 @@ public static class ServiceCollectionElasticExtensions
     /// Must not be null.
     /// </param>
     /// <param name="configuration">
-    /// The application configuration containing Elasticsearch settings.
+    /// The application configuration containing logging settings.
     /// Must not be null.
     /// </param>
     /// <returns>
@@ -80,7 +79,7 @@ public static class ServiceCollectionElasticExtensions
     /// Thrown when <paramref name="services"/> or <paramref name="configuration"/> is null.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// Thrown when Elasticsearch configuration is invalid or missing required fields.
+    /// Thrown when logging configuration is invalid or missing required fields.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -91,12 +90,12 @@ public static class ServiceCollectionElasticExtensions
     /// </para>
     /// <para>
     /// <b>Note:</b> Unlike other provider extensions, this method does not register
-    /// any application services. It only validates and stores the Elasticsearch
+    /// any application services. It only validates and stores the logging
     /// options for use by the Serilog sink configuration in the host setup.
     /// </para>
     /// <para>
     /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Elastic"</c> section to <see cref="ElasticOptionsEntity"/> and
+    /// <c>"Chatify:Logging"</c> section to <see cref="ElasticOptionsEntity"/> and
     /// validates all required fields before registration.
     /// </para>
     /// <para>
@@ -110,32 +109,32 @@ public static class ServiceCollectionElasticExtensions
     /// <para>
     /// <b>Service Lifetimes:</b>
     /// <list type="bullet">
-    /// <item>Elasticsearch options: Singleton (configuration is read-only)</item>
+    /// <item>Logging options: Singleton (configuration is read-only)</item>
     /// </list>
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddElasticsearchLogging(
+    public static IServiceCollection AddLogging(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         GuardUtility.NotNull(services);
         GuardUtility.NotNull(configuration);
 
-        var elasticSection = configuration.GetSection("Chatify:Elastic");
-        var elasticOptions = elasticSection.Get<ElasticOptionsEntity>()
+        var loggingSection = configuration.GetSection("Chatify:Logging");
+        var loggingOptions = loggingSection.Get<ElasticOptionsEntity>()
             ?? new ElasticOptionsEntity();
 
-        if (!elasticOptions.IsValid())
+        if (!loggingOptions.IsValid())
         {
             throw new ArgumentException(
-                $"Invalid Elasticsearch configuration. " +
-                $"Please check the 'Chatify:Elastic' configuration section. " +
+                $"Invalid logging configuration. " +
+                $"Please check the 'Chatify:Logging' configuration section. " +
                 $"Required fields: Uri, IndexPrefix. " +
-                $"Provided options: {elasticOptions}",
+                $"Provided options: {loggingOptions}",
                 nameof(configuration));
         }
 
-        services.AddSingleton(elasticOptions);
+        services.AddSingleton(loggingOptions);
 
         return services;
     }
