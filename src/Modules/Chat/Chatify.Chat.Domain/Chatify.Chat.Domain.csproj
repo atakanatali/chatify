@@ -1,7 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-  </PropertyGroup>
+  <!-- All properties and package references are inherited from Directory.Build.props -->
 
   <ItemGroup>
     <ProjectReference Include="../../../BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />

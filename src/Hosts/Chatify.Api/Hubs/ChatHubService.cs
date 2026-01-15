@@ -317,33 +317,35 @@ public sealed class ChatHubService : Hub
             // Process the command through the application layer
             var result = await _sendChatMessageCommandHandler.HandleAsync(
                 command,
-                Context.ConnectionAborted);
+                Context.ConnectionAborted); // ConnectionAborted is never null in SignalR
 
             if (result.IsSuccess)
             {
-                var enrichedEvent = result.Value;
+                var enrichedEvent = result.Value!;
+                var chatEvent = enrichedEvent.ChatEvent;
                 _logger.LogInformation(
                     "Message {MessageId} sent successfully by {SenderId} to scope {ScopeId}",
-                    enrichedEvent.ChatEvent.MessageId,
+                    chatEvent.MessageId,
                     senderId,
                     request.ScopeId);
 
                 // Broadcast the message to all clients in the scope
                 await Clients.Group(request.ScopeId).SendAsync(
                     "ReceiveMessage",
-                    enrichedEvent.ChatEvent);
+                    chatEvent);
             }
             else
             {
+                var errorMessage = result.Error?.Message ?? "Unknown error";
                 _logger.LogWarning(
                     "Message send failed for {SenderId}: {Error}",
                     senderId,
-                    result.Error?.Message ?? "Unknown error");
+                    errorMessage);
 
                 // Send error back to the client
                 await Clients.Caller.SendAsync(
                     "ReceiveError",
-                    result.Error?.Message ?? "An error occurred");
+                    errorMessage);
             }
         }
         catch (Exception ex)
