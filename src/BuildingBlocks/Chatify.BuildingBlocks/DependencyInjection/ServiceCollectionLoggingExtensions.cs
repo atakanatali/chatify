@@ -37,7 +37,6 @@ public static class ServiceCollectionLoggingExtensions
             .Enrich.WithProcessId()
             .Enrich.WithThreadId()
             .Enrich.WithProperty("Application", "Chatify.ChatApi")
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}")
             .CreateLogger();
 
         services.AddSingleton<ILogService, LogService>();

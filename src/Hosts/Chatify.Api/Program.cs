@@ -1,6 +1,7 @@
 using Chatify.BuildingBlocks.DependencyInjection;
 using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
+using Chatify.Chat.Infrastructure.DependencyInjection;
 using Chatify.Api.Hubs;
 using Chatify.Api.Middleware;
 
