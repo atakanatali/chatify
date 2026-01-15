@@ -248,7 +248,7 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false, // Manual commit for at-least-once guarantee
             FetchMinBytes = 1,
-            FetchMaxWaitMs = 100,
+            FetchWaitMaxMs = 100,
             // Client identifier for debugging in broker logs
             ClientId = ClientIdPrefix + _podIdentityService.PodId,
             // Statistics interval for monitoring (optional, future use)
