@@ -6,6 +6,7 @@ using Chatify.Chat.Infrastructure.Services.Presence;
 using Chatify.Chat.Infrastructure.Services.RateLimit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 
 namespace Chatify.Chat.Infrastructure.DependencyInjection;
