@@ -1,7 +1,3 @@
-using Chatify.BuildingBlocks.Primitives;
-using Chatify.Chat.Application.Ports;
-using Chatify.Chat.Infrastructure.Options;
-using Chatify.Chat.Infrastructure.Services.ChatHistory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -60,6 +56,11 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// }
 /// ]]></code>
 /// </para>
+/// <para>
+/// <b>Forwarding:</b> This method forwards to <c>AddScyllaChatify</c> for the
+/// actual implementation. This allows Program.cs to use the generic <c>AddDatabase</c>
+/// method while following the provider-specific naming convention in the implementation.
+/// </para>
 /// </remarks>
 public static class ServiceCollectionDatabaseExtensions
 {
@@ -79,70 +80,26 @@ public static class ServiceCollectionDatabaseExtensions
     /// The same <see cref="IServiceCollection"/> instance so that multiple
     /// calls can be chained.
     /// </returns>
-    /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="services"/> or <paramref name="configuration"/> is null.
-    /// </exception>
-    /// <exception cref="ArgumentException">
-    /// Thrown when distributed database configuration is invalid or missing required fields.
-    /// </exception>
     /// <remarks>
     /// <para>
-    /// <b>Registered Services:</b> This method registers:
+    /// <b>Implementation:</b> This method forwards to <see cref="ServiceCollectionScyllaExtensions.AddScyllaChatify"/>
+    /// which performs the actual database service registration.
+    /// </para>
+    /// <para>
+    /// <b>Registered Services:</b> The forwarded method registers:
     /// <list type="bullet">
-    /// <item><see cref="ScyllaOptionsEntity"/> as a configured options object (singleton)</item>
-    /// <item>Distributed database implementation of <see cref="IChatHistoryRepository"/> (singleton)</item>
+    /// <item><see cref="Options.ScyllaOptionsEntity"/> as a configured options object (singleton)</item>
+    /// <item>Cassandra <see cref="Cassandra.ISession"/> for database operations (singleton)</item>
+    /// <item>Cassandra <see cref="Cassandra.ICluster"/> for cluster management (singleton)</item>
+    /// <item>ChatHistoryRepository implementation of <see cref="Ports.IChatHistoryRepository"/> (singleton)</item>
     /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Database"</c> section to <see cref="ScyllaOptionsEntity"/> and
-    /// validates all required fields before registration.
-    /// </para>
-    /// <para>
-    /// <b>Validation:</b> The following validations are performed:
-    /// <list type="bullet">
-    /// <item><see cref="ScyllaOptionsEntity.ContactPoints"/> must not be empty</item>
-    /// <item><see cref="ScyllaOptionsEntity.Keyspace"/> must not be empty</item>
-    /// <item>If <see cref="ScyllaOptionsEntity.Username"/> is provided, <see cref="ScyllaOptionsEntity.Password"/> must also be provided</item>
-    /// <item>If <see cref="ScyllaOptionsEntity.Password"/> is provided, <see cref="ScyllaOptionsEntity.Username"/> must also be provided</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Service Lifetimes:</b>
-    /// <list type="bullet">
-    /// <item>Distributed database options: Singleton (configuration is read-only)</item>
-    /// <item>Repository services: Singleton (stateless, use the shared session)</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Current Implementation:</b> This method currently performs configuration
-    /// binding and validation, and registers placeholder service implementations.
     /// </para>
     /// </remarks>
     public static IServiceCollection AddDatabase(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        GuardUtility.NotNull(services);
-        GuardUtility.NotNull(configuration);
-
-        var databaseSection = configuration.GetSection("Chatify:Database");
-        var databaseOptions = databaseSection.Get<ScyllaOptionsEntity>()
-            ?? new ScyllaOptionsEntity();
-
-        if (!databaseOptions.IsValid())
-        {
-            throw new ArgumentException(
-                $"Invalid distributed database configuration. " +
-                $"Please check the 'Chatify:Database' configuration section. " +
-                $"Required fields: ContactPoints, Keyspace. " +
-                $"Provided options: {databaseOptions}",
-                nameof(configuration));
-        }
-
-        services.AddSingleton(databaseOptions);
-        services.AddSingleton<IChatHistoryRepository, ChatHistoryRepository>();
-
-        return services;
+        // Forward to the ScyllaDB-specific extension method
+        return services.AddScyllaChatify(configuration);
     }
 }

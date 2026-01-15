@@ -21,6 +21,7 @@ builder.Services.AddSerilog(configuration);
 builder.Services.AddDatabase(configuration);
 builder.Services.AddCaching(configuration);
 builder.Services.AddMessageBroker(configuration);
+builder.Services.AddChatHistoryWriter(configuration);
 
 // Application Services
 builder.Services.AddChatifyChatApplication();
@@ -31,6 +32,7 @@ builder.Services.AddSignalR();
 
 // Background Services
 builder.Services.AddHostedService<ChatBroadcastBackgroundService>();
+builder.Services.AddHostedService<ChatHistoryWriterBackgroundService>();
 
 var app = builder.Build();
 
