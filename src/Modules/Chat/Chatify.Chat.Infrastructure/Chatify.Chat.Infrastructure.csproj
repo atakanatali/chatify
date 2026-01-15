@@ -10,5 +10,7 @@
   <ItemGroup>
     <!-- Confluent.Kafka for event streaming producer implementation -->
     <PackageReference Include="Confluent.Kafka" />
+    <!-- StackExchange.Redis for presence, rate limiting, and caching -->
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 </Project>
