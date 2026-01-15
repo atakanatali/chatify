@@ -81,8 +81,7 @@ public interface IRateLimitService
     /// <para>
     /// <b>Atomic Operation:</b> This method performs both the check and increment
     /// atomically to prevent race conditions in distributed environments.
-    /// The operation is: "if current count < threshold, increment and allow;
-    /// otherwise, deny."
+    /// The operation is: if current count threshold, increment and allow; otherwise, deny.
     /// </para>
     /// <para>
     /// <b>Sliding Window:</b> For sliding window implementations, the window
