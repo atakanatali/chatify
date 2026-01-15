@@ -1,22 +1,22 @@
 namespace Chatify.Chat.Infrastructure.Options;
 
 /// <summary>
-/// Configuration options for Kafka/Redpanda message broker integration in Chatify.
+/// Configuration options for message broker integration in Chatify.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Purpose:</b> This options class encapsulates all configuration required to connect
-/// to and interact with a Kafka or Redpanda message broker for producing and consuming
+/// to and interact with a message broker for producing and consuming
 /// chat events in the Chatify system.
 /// </para>
 /// <para>
 /// <b>Configuration Binding:</b> These options are bound from the IConfiguration
 /// instance provided to the DI container. The typical configuration section is
-/// "Chatify:Kafka". Example appsettings.json:
+/// "Chatify:MessageBroker". Example appsettings.json:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Kafka": {
+///     "MessageBroker": {
 ///       "BootstrapServers": "localhost:9092",
 ///       "TopicName": "chat-events",
 ///       "Partitions": 3,

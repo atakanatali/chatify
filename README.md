@@ -47,9 +47,9 @@ services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>()
 services.AddElasticLoggingChatify(Configuration);
 
 // Infrastructure Providers
-services.AddScyllaChatify(Configuration);   // Chat history persistence
-services.AddRedisChatify(Configuration);     // Presence, rate limiting, pod identity
-services.AddKafkaChatify(Configuration);     // Event streaming
+services.AddDatabase(Configuration);         // Chat history persistence
+services.AddCaching(Configuration);         // Presence, rate limiting, pod identity
+services.AddMessageBroker(Configuration);    // Event streaming
 
 // Application Services
 services.AddChatifyChatApplication();        // Command handlers

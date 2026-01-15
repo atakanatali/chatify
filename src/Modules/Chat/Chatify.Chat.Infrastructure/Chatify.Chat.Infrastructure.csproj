@@ -6,4 +6,9 @@
     <ProjectReference Include="../Chatify.Chat.Domain/Chatify.Chat.Domain.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Confluent.Kafka for event streaming producer implementation -->
+    <PackageReference Include="Confluent.Kafka" />
+  </ItemGroup>
 </Project>
