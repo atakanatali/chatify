@@ -7,4 +7,11 @@
     <ProjectReference Include="../Chatify.Chat.Domain/Chatify.Chat.Domain.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Configuration options binding - version managed centrally in Directory.Packages.props -->
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <!-- Logging - version managed centrally in Directory.Packages.props -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
 </Project>

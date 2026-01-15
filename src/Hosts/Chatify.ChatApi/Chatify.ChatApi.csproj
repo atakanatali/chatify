@@ -8,4 +8,9 @@
     <ProjectReference Include="../../Modules/Chat/Chatify.Chat.Infrastructure/Chatify.Chat.Infrastructure.csproj" />
     <ProjectReference Include="../../BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Serilog for logging - version managed centrally in Directory.Packages.props -->
+    <PackageReference Include="Serilog.AspNetCore" />
+  </ItemGroup>
 </Project>

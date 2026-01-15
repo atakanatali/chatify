@@ -126,4 +126,15 @@ public static class ChatifyConstants
         /// </summary>
         public const string FailedToProduceMessage = "Failed to produce message {MessageId} from sender {SenderId}";
     }
+
+    /// <summary>
+    /// Defines constant values for common error messages used in the Chatify system.
+    /// </summary>
+    public static class ErrorMessages
+    {
+        /// <summary>
+        /// Error message indicating a feature is not yet implemented.
+        /// </summary>
+        public const string NotImplemented = "not yet implemented";
+    }
 }

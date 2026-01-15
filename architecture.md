@@ -105,12 +105,230 @@ Chatify centralizes foundational dependencies in `Directory.Packages.props` to e
 - **Validation**: `FluentValidation` for request and domain rules.
 
 ## Infrastructure
-The infrastructure layer is expected to integrate with:
 
-- **Kafka** (`Confluent.Kafka`) for event streaming and async messaging.
-- **Redis** (`StackExchange.Redis`) for caching, pub/sub, and presence.
-- **Scylla/Cassandra** (`CassandraCSharpDriver`) for distributed persistence.
-- **Elastic** (Serilog sink) for centralized log storage.
+### Overview
+The infrastructure layer implements the ports defined by the Application layer, providing concrete integrations with external services and data stores. Following Clean Architecture principles, infrastructure code is isolated behind well-defined interfaces, allowing the application logic to remain decoupled from specific implementation technologies.
+
+### Provider Integrations
+
+#### Kafka (Event Streaming)
+**Purpose:** Produces and consumes chat events for asynchronous messaging and fan-out delivery.
+
+**Options:** `KafkaOptionsEntity`
+- `BootstrapServers` - Comma-separated list of broker addresses
+- `TopicName` - Topic for chat events
+- `Partitions` - Number of topic partitions
+- `BroadcastConsumerGroupPrefix` - Prefix for broadcast consumer groups
+
+**DI Extension:** `ServiceCollectionKafkaExtensions.AddKafkaChatify(IConfiguration)`
+
+**Registered Services:**
+- `KafkaOptionsEntity` (singleton) - Configuration options
+- `KafkaChatEventProducerService` (singleton) - Implements `IChatEventProducerService`
+- Future: Background consumers for broadcast delivery
+
+**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+
+**Configuration Section:** `Chatify:Kafka`
+
+```json
+{
+  "Chatify": {
+    "Kafka": {
+      "BootstrapServers": "localhost:9092",
+      "TopicName": "chat-events",
+      "Partitions": 3,
+      "BroadcastConsumerGroupPrefix": "chatify-broadcast"
+    }
+  }
+}
+```
+
+**Partitioning Strategy:** Events are partitioned by `(ScopeType, ScopeId)` to ensure ordering within each chat scope. All messages for a scope go to the same partition, maintaining strict ordering while allowing parallel processing across scopes.
+
+---
+
+#### Redis (Presence, Rate Limiting, Caching)
+**Purpose:** Manages user presence, enforces rate limits, and provides distributed caching.
+
+**Options:** `RedisOptionsEntity`
+- `ConnectionString` - Redis connection string
+
+**DI Extension:** `ServiceCollectionRedisExtensions.AddRedisChatify(IConfiguration)`
+
+**Registered Services:**
+- `RedisOptionsEntity` (singleton) - Configuration options
+- `RedisPresenceService` (singleton) - Implements `IPresenceService`
+- `RedisRateLimitService` (singleton) - Implements `IRateLimitService`
+- Future: `IConnectionMultiplexer` registration, caching services
+
+**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+
+**Configuration Section:** `Chatify:Redis`
+
+```json
+{
+  "Chatify": {
+    "Redis": {
+      "ConnectionString": "localhost:6379"
+    }
+  }
+}
+```
+
+**Data Structures:**
+- Presence: `presence:user:{userId}` (set of connection IDs with TTL)
+- Rate Limiting: `ratelimit:{key}` (sorted set with sliding window)
+
+---
+
+#### ScyllaDB (Message Persistence)
+**Purpose:** Durable storage for chat message history with time-series query optimization.
+
+**Options:** `ScyllaOptionsEntity`
+- `ContactPoints` - Comma-separated list of node addresses
+- `Keyspace` - Keyspace name
+- `Username` - Authentication username (optional)
+- `Password` - Authentication password (optional)
+
+**DI Extension:** `ServiceCollectionScyllaExtensions.AddScyllaChatify(IConfiguration)`
+
+**Registered Services:**
+- `ScyllaOptionsEntity` (singleton) - Configuration options
+- `ScyllaChatHistoryRepository` (singleton) - Implements `IChatHistoryRepository`
+- Future: `ISession` / `ICluster` registration, schema migrations
+
+**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+
+**Configuration Section:** `Chatify:Scylla`
+
+```json
+{
+  "Chatify": {
+    "Scylla": {
+      "ContactPoints": "scylla-node1:9042,scylla-node2:9042",
+      "Keyspace": "chatify",
+      "Username": "chatify_user",
+      "Password": "secure_password"
+    }
+  }
+}
+```
+
+**Table Schema:**
+```sql
+CREATE TABLE chat_messages (
+    scope_type text,
+    scope_id text,
+    created_at_utc timestamp,
+    message_id uuid,
+    sender_id text,
+    text text,
+    origin_pod_id text,
+    PRIMARY KEY ((scope_type, scope_id), created_at_utc, message_id)
+) WITH CLUSTERING ORDER BY (created_at_utc ASC);
+```
+
+---
+
+#### Elasticsearch (Logging)
+**Purpose:** Centralized log aggregation and analysis via Serilog.
+
+**Options:** `ElasticOptionsEntity`
+- `Uri` - Elasticsearch cluster endpoint
+- `Username` - Authentication username (optional)
+- `Password` - Authentication password (optional)
+- `IndexPrefix` - Prefix for log indices (default: "logs-chatify")
+
+**DI Extension:** `ServiceCollectionElasticExtensions.AddElasticLoggingChatify(IConfiguration)`
+
+**Registered Services:**
+- `ElasticOptionsEntity` (singleton) - Configuration options
+
+**Implementation Status:** Options registration only (Serilog sink configuration pending)
+
+**Configuration Section:** `Chatify:Elastic`
+
+```json
+{
+  "Chatify": {
+    "Elastic": {
+      "Uri": "http://localhost:9200",
+      "Username": "elastic",
+      "Password": "changeme",
+      "IndexPrefix": "logs-chatify"
+    }
+  }
+}
+```
+
+**Index Pattern:** `{IndexPrefix}-{Date}` (e.g., `logs-chatify-2026-01-15`)
+
+---
+
+### Service Registration in Program.cs
+
+Infrastructure providers are registered in the host's `Startup.ConfigureServices` method in the following order:
+
+```csharp
+public void ConfigureServices(IServiceCollection services)
+{
+    // 1. Infrastructure Options (must be first)
+    services.AddElasticLoggingChatify(Configuration);
+
+    // 2. Infrastructure Providers
+    services.AddScyllaChatify(Configuration);
+    services.AddRedisChatify(Configuration);
+    services.AddKafkaChatify(Configuration);
+
+    // 3. Application Services
+    services.AddChatifyChatApplication();
+}
+```
+
+**Registration Order Rationale:**
+1. Elasticsearch options must be registered early for Serilog configuration
+2. Infrastructure providers are registered before application services (dependency order)
+3. Application services depend on infrastructure ports being implemented
+
+---
+
+### Placeholder Implementations
+
+All infrastructure services currently have placeholder implementations that:
+1. Log the method invocation with relevant parameters
+2. Throw `NotImplementedException` with a descriptive message
+
+This allows the application to compile and the DI container to be configured correctly while the actual implementations are developed in subsequent steps.
+
+**Example Placeholder Pattern:**
+```csharp
+public Task<(int Partition, long Offset)> ProduceAsync(
+    ChatEventDto chatEvent,
+    CancellationToken cancellationToken)
+{
+    _logger.LogWarning(
+        "KafkaChatEventProducerService.ProduceAsync called - NOT YET IMPLEMENTED. " +
+        "Event: MessageId={MessageId}, ScopeType={ScopeType}, ScopeId={ScopeId}",
+        chatEvent.MessageId, chatEvent.ScopeType, chatEvent.ScopeId);
+
+    throw new NotImplementedException(
+        $"KafkaChatEventProducerService.ProduceAsync is not yet implemented.");
+}
+```
+
+---
+
+### Future Implementation Steps
+
+The placeholder implementations will be replaced with actual provider integration in subsequent development steps:
+
+1. **Kafka:** Implement producer with Confluent.Kafka, partitioning, and error handling
+2. **Redis:** Implement presence sets with TTL and sliding-window rate limiting
+3. **ScyllaDB:** Implement repository with prepared statements and proper consistency levels
+4. **Elasticsearch:** Configure Serilog sink with proper index formatting
+
+Each implementation will maintain the existing interfaces and options, ensuring minimal changes to the rest of the codebase.
 
 ## Testing Strategy
 Testing relies on xUnit and FluentAssertions for unit coverage, with `Microsoft.AspNetCore.Mvc.Testing` for host-level integration tests and `coverlet.collector` for coverage reporting.
