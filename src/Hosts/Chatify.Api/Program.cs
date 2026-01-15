@@ -1,10 +1,10 @@
 using Chatify.BuildingBlocks.DependencyInjection;
 using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
-using Chatify.Chat.Infrastructure.DependencyInjection;
 using Chatify.Api.Hubs;
 using Chatify.Api.Middleware;
 using Serilog;
+using Serilog.Sinks.Elasticsearch;
 
 namespace Chatify.Api;
 
@@ -273,9 +273,8 @@ public static class Program
             // ============================================
             // STEP 2: Register Infrastructure Options
             // ============================================
-            // Logging options and ILogService must be registered first
-            // so Serilog can use them for log shipping configuration
-            services.AddLogging(Configuration);
+            // ILogService must be registered for application-level logging
+            services.AddLogging();
 
             // ============================================
             // STEP 3: Register Infrastructure Providers
