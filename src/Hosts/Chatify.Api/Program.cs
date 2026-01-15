@@ -108,8 +108,10 @@ public static class Program
             // This must be done early to capture all startup logs
             .UseSerilog((context, services, loggerConfiguration) =>
             {
-                // Retrieve logging options from DI container
-                var loggingOptions = services.BuildServiceProvider().GetRequiredService<LoggingOptionsEntity>();
+                // Read logging options directly from configuration
+                var loggingSection = context.Configuration.GetSection("Chatify:Logging");
+                var loggingOptions = loggingSection.Get<LoggingOptionsEntity>()
+                    ?? new LoggingOptionsEntity();
 
                 loggerConfiguration
                     .ReadFrom.Configuration(context.Configuration)
@@ -119,8 +121,12 @@ public static class Program
                     .Enrich.WithProcessId()
                     .Enrich.WithThreadId()
                     .Enrich.WithProperty("Application", "Chatify.ChatApi")
-                    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}")
-                    .WriteTo.Elasticsearch(new[] { new Uri(loggingOptions.Uri) }, options =>
+                    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
+
+                // Only configure Elasticsearch sink if valid configuration is provided
+                if (loggingOptions.IsValid())
+                {
+                    loggerConfiguration.WriteTo.Elasticsearch(new[] { new Uri(loggingOptions.Uri) }, options =>
                     {
                         options.DataStream = new Elastic.Ingest.Elasticsearch.DataStreams.DataStreamName(loggingOptions.IndexPrefix, "date");
                         options.BootstrapMethod = Elastic.Ingest.Elasticsearch.ElasticsearchIngestBootstrapMethod.Failure;
@@ -140,6 +146,7 @@ public static class Program
                                 loggingOptions.Password);
                         }
                     });
+                }
             })
             .ConfigureWebHostDefaults(webBuilder =>
             {
