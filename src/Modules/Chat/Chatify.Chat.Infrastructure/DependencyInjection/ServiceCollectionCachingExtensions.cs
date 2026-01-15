@@ -155,7 +155,8 @@ public static class ServiceCollectionCachingExtensions
         services.AddSingleton<IConnectionMultiplexer>(sp =>
         {
             var options = sp.GetRequiredService<RedisOptionsEntity>();
-            var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Program>>();
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger(typeof(ServiceCollectionCachingExtensions));
 
             var configurationOptions = ConfigurationOptions.Parse(options.ConnectionString);
             configurationOptions.AbortOnConnectFail = false;

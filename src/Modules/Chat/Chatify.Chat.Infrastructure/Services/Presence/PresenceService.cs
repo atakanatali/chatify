@@ -524,20 +524,20 @@ public sealed class PresenceService : IPresenceService
 
         // Get all members (sorted by timestamp/score)
         var members = await db.SortedSetRangeByRankAsync(
-            presenceKey,
-            order: Order.Ascending,
+            key: presenceKey,
             start: 0,
             stop: -1,
-            CommandFlags.None);
+            order: Order.Ascending,
+            flags: CommandFlags.None);
 
         // Parse connection IDs from members
         var connectionIds = new List<string>();
         foreach (var member in members)
         {
             var parsed = ParseMember(member);
-            if (parsed is not null)
+            if (parsed.HasValue)
             {
-                connectionIds.Add(parsed.ConnectionId);
+                connectionIds.Add(parsed.Value.ConnectionId);
             }
         }
 
