@@ -111,7 +111,7 @@ The infrastructure layer implements the ports defined by the Application layer, 
 
 ### Provider Integrations
 
-#### Kafka (Event Streaming)
+#### Message Broker (Event Streaming)
 **Purpose:** Produces and consumes chat events for asynchronous messaging and fan-out delivery.
 
 **Options:** `KafkaOptionsEntity`
@@ -120,21 +120,21 @@ The infrastructure layer implements the ports defined by the Application layer, 
 - `Partitions` - Number of topic partitions
 - `BroadcastConsumerGroupPrefix` - Prefix for broadcast consumer groups
 
-**DI Extension:** `ServiceCollectionKafkaExtensions.AddKafkaChatify(IConfiguration)`
+**DI Extension:** `ServiceCollectionMessageBrokerExtensions.AddMessageBroker(IConfiguration)`
 
 **Registered Services:**
 - `KafkaOptionsEntity` (singleton) - Configuration options
-- `KafkaChatEventProducerService` (singleton) - Implements `IChatEventProducerService`
+- `ChatEventProducerService` (singleton) - Implements `IChatEventProducerService`
 - Future: Background consumers for broadcast delivery
 
-**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+**Implementation Status:** Producer implemented using Confluent.Kafka v2.5.3
 
-**Configuration Section:** `Chatify:Kafka`
+**Configuration Section:** `Chatify:MessageBroker`
 
 ```json
 {
   "Chatify": {
-    "Kafka": {
+    "MessageBroker": {
       "BootstrapServers": "localhost:9092",
       "TopicName": "chat-events",
       "Partitions": 3,
@@ -144,7 +144,25 @@ The infrastructure layer implements the ports defined by the Application layer, 
 }
 ```
 
-**Partitioning Strategy:** Events are partitioned by `(ScopeType, ScopeId)` to ensure ordering within each chat scope. All messages for a scope go to the same partition, maintaining strict ordering while allowing parallel processing across scopes.
+**Producer Semantics:**
+- **Client Library:** Confluent.Kafka v2.5.3 (managed via `Directory.Packages.props`)
+- **Message Key:** `ScopeId` (string) - Used for partitioning to ensure ordering within scopes
+- **Message Value:** JSON-serialized `ChatEventDto` using `System.Text.Json` with UTF-8 encoding
+- **Acknowledgment:** `acks=all` - Waits for all in-sync replicas to acknowledge for durability
+- **Idempotence:** `enable.idempotence=true` - Prevents duplicate messages on retry
+- **Retries:** `MessageSendMaxRetries=INT_MAX` - Retries indefinitely on transient failures
+- **Compression:** `compression.type=snappy` - Efficient network compression
+- **Batching:** `linger.ms=5` with 1MB max batch size for improved throughput
+- **Return Value:** `ProduceAsync` returns `(int Partition, long Offset)` for delivery tracking
+
+**Partitioning Strategy:** Events are partitioned by `ScopeId` (message key) to ensure ordering within each chat scope. The message broker hashes the key to determine the target partition. All messages for the same scope are routed to the same partition, maintaining strict ordering while allowing parallel processing across different scopes.
+
+**Command Handler Integration:**
+- `SendChatMessageCommandHandler` calls `_chatEventProducerService.ProduceAsync()`
+- Returns `EnrichedChatEventDto` containing the original event plus partition/offset metadata
+- Message broker exceptions (`KafkaException`, `OperationCanceledException`) are caught and returned as `ServiceError.Messaging.EventProductionFailed`
+
+**Graceful Shutdown:** Producer implements `IDisposable`; the DI container disposes it on application shutdown, flushing any pending messages.
 
 ---
 
@@ -277,9 +295,9 @@ public void ConfigureServices(IServiceCollection services)
     services.AddElasticLoggingChatify(Configuration);
 
     // 2. Infrastructure Providers
-    services.AddScyllaChatify(Configuration);
-    services.AddRedisChatify(Configuration);
-    services.AddKafkaChatify(Configuration);
+    services.AddDatabase(Configuration);
+    services.AddCaching(Configuration);
+    services.AddMessageBroker(Configuration);
 
     // 3. Application Services
     services.AddChatifyChatApplication();
@@ -684,7 +702,7 @@ This registers:
 - All command handlers (scoped lifetime)
 - Application services (none currently, will be added as needed)
 
-Infrastructure services are registered separately via the Infrastructure layer's extension methods (e.g., `AddKafkaChatify`, `AddRedisChatify`).
+Infrastructure services are registered separately via the Infrastructure layer's extension methods (e.g., `AddMessageBroker`, `AddCaching`).
 
 ## Chatify.ChatApi Host - Request Flow and Middleware
 
@@ -718,9 +736,9 @@ public void ConfigureServices(IServiceCollection services)
     services.AddElasticLoggingChatify(Configuration);
 
     // 3. Infrastructure Providers
-    services.AddScyllaChatify(Configuration);
-    services.AddRedisChatify(Configuration);
-    services.AddKafkaChatify(Configuration);
+    services.AddDatabase(Configuration);
+    services.AddCaching(Configuration);
+    services.AddMessageBroker(Configuration);
 
     // 4. Application Services
     services.AddChatifyChatApplication();
