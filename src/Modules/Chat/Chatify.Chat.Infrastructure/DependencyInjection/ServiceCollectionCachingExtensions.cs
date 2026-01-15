@@ -1,6 +1,7 @@
 using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Infrastructure.Options;
+using Chatify.Chat.Infrastructure.Services.PodIdentity;
 using Chatify.Chat.Infrastructure.Services.Presence;
 using Chatify.Chat.Infrastructure.Services.RateLimit;
 using Microsoft.Extensions.Configuration;
@@ -37,19 +38,19 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// <b>Usage Pattern:</b>
 /// <code><![CDATA[
 /// // In Program.cs
-/// builder.Services.AddDistributedCache(
+/// builder.Services.AddCaching(
 ///     builder.Configuration
 /// );
 /// ]]></code>
 /// </para>
 /// <para>
 /// <b>Configuration Section:</b> By default, this extension reads from the
-/// <c>"Chatify:Redis"</c> configuration section. Ensure your appsettings.json
+/// <c>"Chatify:Caching"</c> configuration section. Ensure your appsettings.json
 /// or environment variables provide the required configuration:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Redis": {
+///     "Caching": {
 ///       "ConnectionString": "localhost:6379"
 ///     }
 ///   }
@@ -57,7 +58,7 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// ]]></code>
 /// </para>
 /// </remarks>
-public static class ServiceCollectionRedisExtensions
+public static class ServiceCollectionCachingExtensions
 {
     /// <summary>
     /// Registers Chatify distributed cache infrastructure services with the dependency
@@ -92,7 +93,7 @@ public static class ServiceCollectionRedisExtensions
     /// </para>
     /// <para>
     /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Redis"</c> section to <see cref="RedisOptionsEntity"/> and
+    /// <c>"Chatify:Caching"</c> section to <see cref="RedisOptionsEntity"/> and
     /// validates the connection string before registration.
     /// </para>
     /// <para>
@@ -114,30 +115,33 @@ public static class ServiceCollectionRedisExtensions
     /// binding and validation, and registers placeholder service implementations.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddDistributedCache(
+    public static IServiceCollection AddCaching(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         GuardUtility.NotNull(services);
         GuardUtility.NotNull(configuration);
 
-        var redisSection = configuration.GetSection("Chatify:Redis");
-        var redisOptions = redisSection.Get<RedisOptionsEntity>()
+        var cachingSection = configuration.GetSection("Chatify:Caching");
+        var cachingOptions = cachingSection.Get<RedisOptionsEntity>()
             ?? new RedisOptionsEntity();
 
-        if (!redisOptions.IsValid())
+        if (!cachingOptions.IsValid())
         {
             throw new ArgumentException(
                 $"Invalid distributed cache configuration. " +
-                $"Please check the 'Chatify:Redis' configuration section. " +
+                $"Please check the 'Chatify:Caching' configuration section. " +
                 $"Required field: ConnectionString. " +
-                $"Provided options: {redisOptions}",
+                $"Provided options: {cachingOptions}",
                 nameof(configuration));
         }
 
-        services.AddSingleton(redisOptions);
+        services.AddSingleton(cachingOptions);
         services.AddSingleton<IPresenceService, PresenceService>();
         services.AddSingleton<IRateLimitService, RateLimitService>();
+
+        // Register pod identity service (no configuration required, reads from environment)
+        services.AddSingleton<IPodIdentityService, PodIdentityService>();
 
         return services;
     }

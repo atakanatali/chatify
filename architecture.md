@@ -684,4 +684,262 @@ This registers:
 - All command handlers (scoped lifetime)
 - Application services (none currently, will be added as needed)
 
-Infrastructure services are registered separately via the Infrastructure layer's extension methods (e.g., `AddChatifyChatKafka`, `AddChatifyChatRedis`).
+Infrastructure services are registered separately via the Infrastructure layer's extension methods (e.g., `AddKafkaChatify`, `AddRedisChatify`).
+
+## Chatify.ChatApi Host - Request Flow and Middleware
+
+### Overview
+The `Chatify.ChatApi` host is the entry point for all client requests. It implements a comprehensive middleware pipeline for cross-cutting concerns and exposes a SignalR hub for real-time chat functionality.
+
+### Host Structure
+
+```
+src/Hosts/Chatify.ChatApi/
+├── Program.cs              # Application entry point, host builder, service registration
+├── Middleware/
+│   ├── CorrelationIdMiddleware.cs          # Distributed tracing middleware
+│   └── GlobalExceptionHandlingMiddleware.cs # Global exception handler
+└── Hubs/
+    └── ChatHubService.cs  # SignalR hub for real-time chat
+```
+
+### Service Registration
+
+The host's `Startup.ConfigureServices` method registers services in the following order:
+
+```csharp
+public void ConfigureServices(IServiceCollection services)
+{
+    // 1. BuildingBlocks (clock, correlation)
+    services.AddSingleton<IClockService, SystemClockService>();
+    services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+
+    // 2. Infrastructure Options
+    services.AddElasticLoggingChatify(Configuration);
+
+    // 3. Infrastructure Providers
+    services.AddScyllaChatify(Configuration);
+    services.AddRedisChatify(Configuration);
+    services.AddKafkaChatify(Configuration);
+
+    // 4. Application Services
+    services.AddChatifyChatApplication();
+
+    // 5. ASP.NET Core Services
+    services.AddControllers();
+    services.AddSignalR();
+}
+```
+
+### Middleware Pipeline
+
+The HTTP request pipeline is configured in `Startup.Configure`:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     HTTP Request Flow                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Developer Exception Page (development only)                │
+│     └─> Shows detailed error information in development        │
+│                                                                 │
+│  2. GlobalExceptionHandlingMiddleware                          │
+│     ├─> Wraps downstream execution in try/catch                │
+│     ├─> Catches all unhandled exceptions                       │
+│     ├─> Logs exception with correlation ID                      │
+│     └─> Returns RFC 7807 ProblemDetails response              │
+│                                                                 │
+│  3. CorrelationIdMiddleware                                    │
+│     ├─> Extracts X-Correlation-ID header from request          │
+│     ├─> Validates format (corr_{guid})                         │
+│     ├─> Generates new ID if missing/invalid                    │
+│     ├─> Stores in ICorrelationContextAccessor (AsyncLocal)     │
+│     └─> Adds X-Correlation-ID to response headers              │
+│                                                                 │
+│  4. Routing                                                    │
+│     └─> Maps request to endpoint (controller or hub)           │
+│                                                                 │
+│  5. Authorization                                              │
+│     └─> Checks user permissions                                │
+│                                                                 │
+│  6. Endpoints                                                  │
+│     ├─> Controllers (/api/*)                                   │
+│     └─> SignalR Hubs (/hubs/chat)                              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### CorrelationIdMiddleware
+
+**Location:** `src/Hosts/Chatify.ChatApi/Middleware/CorrelationIdMiddleware.cs`
+
+**Purpose:** Ensures every HTTP request has a correlation ID for distributed tracing.
+
+**Behavior:**
+1. Checks for `X-Correlation-ID` header in the request
+2. Validates the format (`corr_{guid}`) using `CorrelationIdUtility`
+3. Generates a new correlation ID if missing or invalid
+4. Stores the ID in `ICorrelationContextAccessor` (AsyncLocal storage)
+5. Adds the correlation ID to response headers
+
+**Example:**
+```
+Request:  (no X-Correlation-ID header)
+          ↓
+Middleware: Generates "corr_a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+          ↓
+AsyncLocal: Stores ID for async context flow
+          ↓
+Response: X-Correlation-ID: corr_a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+### GlobalExceptionHandlingMiddleware
+
+**Location:** `src/Hosts/Chatify.ChatApi/Middleware/GlobalExceptionHandlingMiddleware.cs`
+
+**Purpose:** Catches all unhandled exceptions and returns standardized ProblemDetails responses.
+
+**Exception to Status Code Mapping:**
+
+| Exception Type | HTTP Status | Title |
+|----------------|-------------|-------|
+| `ArgumentException`, `ArgumentNullException` | 400 | Bad Request |
+| `UnauthorizedAccessException` | 401 | Unauthorized |
+| `KeyNotFoundException` | 404 | Not Found |
+| `InvalidOperationException` | 409 | Conflict |
+| `TimeoutException` | 504 | Gateway Timeout |
+| All other exceptions | 500 | Internal Server Error |
+
+**Response Format (RFC 7807):**
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "The request was invalid or missing required parameters.",
+  "instance": "/chat/send"
+}
+```
+
+### ChatHubService (SignalR Hub)
+
+**Location:** `src/Hosts/Chatify.ChatApi/Hubs/ChatHubService.cs`
+
+**Endpoint:** `/hubs/chat`
+
+**Methods:**
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `JoinScopeAsync` | `scopeId` | Adds client to SignalR group for the scope |
+| `LeaveScopeAsync` | `scopeId` | Removes client from SignalR group |
+| `SendAsync` | `ChatSendRequestDto` | Processes and broadcasts message to scope |
+
+**Lifecycle Hooks:**
+
+| Method | Description |
+|--------|-------------|
+| `OnConnectedAsync` | Logs client connection with connection ID |
+| `OnDisconnectedAsync` | Logs client disconnection with exception details |
+
+**SignalR Group Strategy:**
+- Each `scopeId` maps to a SignalR group
+- Clients join groups to receive messages for specific scopes
+- Messages are broadcast using `Clients.Group(scopeId).SendAsync()`
+
+### Complete Request Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SignalR Chat Message - Complete Flow                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  CLIENT                                                                     │
+│     ┌──────────────┐                                                        │
+│     │ Browser App  │                                                        │
+│     └──────┬───────┘                                                        │
+│            │                                                                 │
+│            │ 1. WebSocket Connection                                         │
+│            │    POST /hubs/chat (SignalR negotiation)                        │
+│            ▼                                                                 │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │              Chatify.ChatApi Middleware Pipeline                 │    │
+│     ├─────────────────────────────────────────────────────────────────┤    │
+│     │                                                                 │    │
+│     │  CorrelationIdMiddleware → Generate/Set Correlation ID          │    │
+│     │  GlobalExceptionHandlingMiddleware → Wrap execution             │    │
+│     │  SignalR Hub invocation → ChatHubService.OnConnectedAsync()      │    │
+│     │                                                                 │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ 2. Join Scope                                                      │
+│            │    hub.invoke("JoinScopeAsync", "general")                         │
+│            ▼                                                                 │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │                    ChatHubService                               │    │
+│     │  ────────────────────────────────────────────────────────────  │    │
+│     │  JoinScopeAsync(string scopeId)                                │    │
+│     │    └─> Groups.AddToGroupAsync(connectionId, "general")         │    │
+│     │                                                                 │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ 3. Send Message                                                    │
+│            │    hub.invoke("SendAsync", requestDto)                             │
+│            ▼                                                                 │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │                    ChatHubService                               │    │
+│     │  ────────────────────────────────────────────────────────────  │    │
+│     │  SendAsync(ChatSendRequestDto request)                         │    │
+│     │    ├─ Extract senderId from auth context                       │    │
+│     │    ├─ Create SendChatMessageCommand                            │    │
+│     │    └─ Call SendChatMessageCommandHandler.HandleAsync()         │    │
+│     │                           │                                      │    │
+│     │                           ▼                                      │    │
+│     │  ┌─────────────────────────────────────────────────────────┐   │    │
+│     │  │     SendChatMessageCommandHandler                       │   │    │
+│     │  ├─────────────────────────────────────────────────────────┤   │    │
+│     │  │                                                         │   │    │
+│     │  │  1. Validate Domain Policy                              │   │    │
+│     │  │     └─> ChatDomainPolicy.Validate*()                    │   │    │
+│     │  │                                                         │   │    │
+│     │  │  2. Check Rate Limit                                    │   │    │
+│     │  │     └─> IRateLimitService.CheckAndIncrementAsync()      │   │    │
+│     │  │                                                         │   │    │
+│     │  │  3. Create ChatEventDto                                 │   │    │
+│     │  │     └─> MessageId, CreatedAtUtc, OriginPodId            │   │    │
+│     │  │                                                         │   │    │
+│     │  │  4. Produce to Kafka                                    │   │    │
+│     │  │     └─> IChatEventProducerService.ProduceAsync()        │   │    │
+│     │  │         └─> Returns (partition, offset)                 │   │    │
+│     │  │                                                         │   │    │
+│     │  │  5. Return EnrichedChatEventDto                          │   │    │
+│     │  │                                                         │   │    │
+│     │  └─────────────────────────────────────────────────────────┘   │    │
+│     │                           │                                      │    │
+│     │                           ▼                                      │    │
+│     │  Broadcast to Group:                                                │    │
+│     │  Clients.Group("general").SendAsync("ReceiveMessage", chatEvent)  │    │
+│     │                                                                 │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ 4. Broadcast to All Clients in Scope                                │
+│            │    All clients in "general" group receive message                 │
+│            ▼                                                                 │
+│     ┌──────────────┐                                                        │
+│     │ Browser App  │  ← ReceiveMessage event                                 │
+│     └──────────────┘                                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Integration Points
+
+| Component | Integration Point | Responsibility |
+|-----------|-------------------|----------------|
+| `CorrelationIdMiddleware` | Early in pipeline | Set correlation ID for all requests |
+| `GlobalExceptionHandlingMiddleware` | Wraps pipeline | Catch and handle all exceptions |
+| `ChatHubService` | SignalR endpoint | Real-time hub methods |
+| `SendChatMessageCommandHandler` | Application layer | Orchestrate message processing |
+| `IPodIdentityService` | Infrastructure | Provide pod identity |
+| `ICorrelationContextAccessor` | BuildingBlocks | Async-local correlation storage |
+

@@ -37,19 +37,19 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// <b>Usage Pattern:</b>
 /// <code><![CDATA[
 /// // In Program.cs
-/// builder.Services.AddKafka(
+/// builder.Services.AddMessageBroker(
 ///     builder.Configuration
 /// );
 /// ]]></code>
 /// </para>
 /// <para>
 /// <b>Configuration Section:</b> By default, this extension reads from the
-/// <c>"Chatify:Kafka"</c> configuration section. Ensure your appsettings.json
+/// <c>"Chatify:MessageBroker"</c> configuration section. Ensure your appsettings.json
 /// or environment variables provide the required configuration:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Kafka": {
+///     "MessageBroker": {
 ///       "BootstrapServers": "localhost:9092",
 ///       "TopicName": "chat-events",
 ///       "Partitions": 3,
@@ -60,7 +60,7 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// ]]></code>
 /// </para>
 /// </remarks>
-public static class ServiceCollectionKafkaExtensions
+public static class ServiceCollectionMessageBrokerExtensions
 {
     /// <summary>
     /// Registers Chatify message broker infrastructure services with the dependency
@@ -94,7 +94,7 @@ public static class ServiceCollectionKafkaExtensions
     /// </para>
     /// <para>
     /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Kafka"</c> section to <see cref="KafkaOptionsEntity"/> and
+    /// <c>"Chatify:MessageBroker"</c> section to <see cref="KafkaOptionsEntity"/> and
     /// validates all required fields before registration.
     /// </para>
     /// <para>
@@ -118,28 +118,28 @@ public static class ServiceCollectionKafkaExtensions
     /// binding and validation, and registers placeholder service implementations.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddKafka(
+    public static IServiceCollection AddMessageBroker(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         GuardUtility.NotNull(services);
         GuardUtility.NotNull(configuration);
 
-        var kafkaSection = configuration.GetSection("Chatify:Kafka");
-        var kafkaOptions = kafkaSection.Get<KafkaOptionsEntity>()
+        var messageBrokerSection = configuration.GetSection("Chatify:MessageBroker");
+        var messageBrokerOptions = messageBrokerSection.Get<KafkaOptionsEntity>()
             ?? new KafkaOptionsEntity();
 
-        if (!kafkaOptions.IsValid())
+        if (!messageBrokerOptions.IsValid())
         {
             throw new ArgumentException(
                 $"Invalid message broker configuration. " +
-                $"Please check the 'Chatify:Kafka' configuration section. " +
+                $"Please check the 'Chatify:MessageBroker' configuration section. " +
                 $"Required fields: BootstrapServers, TopicName. " +
-                $"Provided options: {kafkaOptions}",
+                $"Provided options: {messageBrokerOptions}",
                 nameof(configuration));
         }
 
-        services.AddSingleton(kafkaOptions);
+        services.AddSingleton(messageBrokerOptions);
         services.AddSingleton<IChatEventProducerService, ChatEventProducerService>();
 
         return services;

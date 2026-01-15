@@ -1,7 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-  </PropertyGroup>
+  <!-- All properties and package references are inherited from Directory.Build.props -->
 
   <ItemGroup>
     <ProjectReference Include="../../Modules/Chat/Chatify.Chat.Application/Chatify.Chat.Application.csproj" />
@@ -12,5 +10,6 @@
   <ItemGroup>
     <!-- Serilog for logging - version managed centrally in Directory.Packages.props -->
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Elastic.Serilog.Sinks" />
   </ItemGroup>
 </Project>

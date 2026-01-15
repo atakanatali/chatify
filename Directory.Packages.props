@@ -5,6 +5,7 @@
 
   <ItemGroup>
     <!-- Common Microsoft Extensions packages for DI and logging across all projects. -->
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
     <!-- Real-time messaging for chat hubs and connections. -->
@@ -12,6 +13,7 @@
     <!-- JSON protocol support for SignalR payloads. -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0" />
     <!-- Serilog integration for ASP.NET Core logging pipeline. -->
+    <PackageVersion Include="Serilog" Version="3.1.1" />
     <PackageVersion Include="Serilog.AspNetCore" Version="8.0.2" />
     <!-- Console sink for local and container diagnostics. -->
     <PackageVersion Include="Serilog.Sinks.Console" Version="5.0.1" />

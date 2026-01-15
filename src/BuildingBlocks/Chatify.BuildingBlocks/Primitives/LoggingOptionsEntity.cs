@@ -1,4 +1,4 @@
-namespace Chatify.Chat.Infrastructure.Options;
+namespace Chatify.BuildingBlocks.Primitives;
 
 /// <summary>
 /// Configuration options for Elasticsearch logging integration in Chatify.
@@ -8,6 +8,14 @@ namespace Chatify.Chat.Infrastructure.Options;
 /// <b>Purpose:</b> This options class encapsulates all configuration required to connect
 /// to and interact with an Elasticsearch cluster for centralized log aggregation and
 /// analysis in the Chatify system.
+/// </para>
+/// <para>
+/// <b>Location:</b> This is placed in BuildingBlocks as a shared primitive because:
+/// <list type="bullet">
+/// <item>Logging configuration is a fundamental cross-cutting concern</item>
+/// <item>All services in the modular monolith need the same logging configuration</item>
+/// <item>It should be accessible without dependencies on specific modules</item>
+/// </list>
 /// </para>
 /// <para>
 /// <b>Integration:</b> These options are used by the Serilog Elasticsearch sink to
@@ -23,27 +31,32 @@ namespace Chatify.Chat.Infrastructure.Options;
 /// <para>
 /// <b>Configuration Binding:</b> These options are bound from the IConfiguration
 /// instance provided to the DI container. The typical configuration section is
-/// "Chatify:Elastic". Example appsettings.json:
+/// "Chatify:Logging". Example appsettings.json:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Elastic": {
+///     "Logging": {
 ///       "Uri": "http://localhost:9200",
 ///       "Username": "elastic",
 ///       "Password": "changeme",
-///       "IndexPrefix": "logs-chatify"
+///       "IndexPrefix": "logs-chatify-chatapi"
 ///     }
 ///   }
 /// }
 /// ]]></code>
 /// </para>
 /// <para>
-/// <b>Index Strategy:</b> The <see cref="IndexPrefix"/> is combined with the date
-/// to create daily indices (e.g., <c>logs-chatify-2026-01-15</c>). This provides:
+/// <b>Index Naming Pattern:</b> The <see cref="IndexPrefix"/> follows the pattern
+/// <c>logs-chatify-{servicename}</c> where {servicename} is the service identifier
+/// (e.g., "chatapi"). The full index name is constructed as:
+/// <c>{IndexPrefix}-{Date}</c>, where Date is in <c>yyyy.MM.dd</c> format.
+/// </para>
+/// <para>
+/// <b>Examples:</b>
 /// <list type="bullet">
-/// <item>Manageable index sizes for easier maintenance</item>
-/// <item>Efficient deletion of old data by date range</item>
-/// <item>Optimized query performance by searching only relevant time ranges</item>
+/// <item><c>logs-chatify-chatapi-2026.01.15</c> - Chatify Chat API</item>
+/// <item><c>logs-chatify-gateway-2026.01.15</c> - API Gateway (future)</item>
+/// <item><c>logs-chatify-worker-2026.01.15</c> - Background worker (future)</item>
 /// </list>
 /// </para>
 /// <para>
@@ -55,7 +68,7 @@ namespace Chatify.Chat.Infrastructure.Options;
 /// and 8.x, as well as OpenSearch (the AWS-compatible fork).
 /// </para>
 /// </remarks>
-public record ElasticOptionsEntity
+public record LoggingOptionsEntity
 {
     /// <summary>
     /// Gets the URI of the Elasticsearch cluster endpoint.
@@ -89,11 +102,6 @@ public record ElasticOptionsEntity
     /// <b>SSL/TLS:</b> Use <c>https://</c> for production deployments to encrypt
     /// log data in transit. Ensure the server certificate is trusted by the client.
     /// </para>
-    /// <para>
-    /// <b>Load Balancing:</b> If using a load balancer or proxy in front of
-    /// Elasticsearch, specify the load balancer URI. The load balancer should
-    /// distribute requests across all nodes in the cluster.
-    /// </para>
     /// </remarks>
     public string Uri { get; init; } = string.Empty;
 
@@ -113,24 +121,6 @@ public record ElasticOptionsEntity
     /// <item><b>Cloud IAM:</b> IAM-based authentication (Elastic Cloud, AWS)</item>
     /// <item><b>Anonymous:</b> No authentication (development only)</item>
     /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Default Users:</b>
-    /// <list type="bullet">
-    /// <item><c>elastic</c> - Built-in superuser (avoid using in production)</item>
-    /// <item>Custom users with limited privileges should be created for applications</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>User Management:</b> Create a dedicated user for Chatify with minimal
-    /// required permissions (create index, write documents). Example:
-    /// <code><![CDATA[
-    /// POST /_security/user/chatify_logger
-    /// {
-    ///   "password": "secure_password",
-    ///   "roles": ["chatify_log_writer"]
-    /// }
-    /// ]]></code>
     /// </para>
     /// </remarks>
     public string? Username { get; init; }
@@ -155,11 +145,6 @@ public record ElasticOptionsEntity
     /// <b>Never Hardcode:</b> Avoid hardcoding passwords in appsettings.json or
     /// source control. Use configuration providers that inject secrets at runtime.
     /// </para>
-    /// <para>
-    /// <b>Rotation:</b> Implement password rotation procedures for production deployments.
-    /// When rotating credentials, ensure a graceful restart of Chatify services to
-    /// pick up the new credentials.
-    /// </para>
     /// </remarks>
     public string? Password { get; init; }
 
@@ -175,14 +160,14 @@ public record ElasticOptionsEntity
     /// </para>
     /// <para>
     /// <b>Index Naming Pattern:</b> The full index name is constructed as:
-    /// <c>{IndexPrefix}-{Date}</c>, where Date is in <c>yyyy-MM-dd</c> format.
+    /// <c>{IndexPrefix}-{Date}</c>, where Date is in <c>yyyy.MM.dd</c> format.
     /// </para>
     /// <para>
     /// <b>Examples:</b>
     /// <list type="bullet">
-    /// <item><c>logs-chatify-2026-01-15</c> - Default prefix</item>
-    /// <item><c>chatify-prod-2026-01-15</c> - Environment-specific prefix</item>
-    /// <item><c>chatify-chatapi-2026-01-15</c> - Service-specific prefix</item>
+    /// <item><c>logs-chatify-chatapi-2026.01.15</c> - Default for ChatApi</item>
+    /// <item><c>chatify-prod-2026.01.15</c> - Environment-specific prefix</item>
+    /// <item><c>chatify-worker-2026.01.15</c> - Service-specific prefix</item>
     /// </list>
     /// </para>
     /// <para>
@@ -190,25 +175,8 @@ public record ElasticOptionsEntity
     /// <list type="bullet">
     /// <item>Use lowercase letters, numbers, and hyphens only</item>
     /// <item>Avoid underscores (can cause issues with some tools)</item>
-    /// <item>Keep it short but descriptive</item>
     /// <item>Include environment or service name if running multiple instances</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Index Management:</b> Using a date-based index pattern allows for:
-    /// <list type="bullet">
-    /// <item>Easy cleanup of old logs using Index Lifecycle Management (ILM)</item>
-    /// <item>Better query performance by limiting searches to relevant date ranges</item>
-    /// <item>Efficient snapshot and restore operations</item>
-    /// <item>Rolling over to new indices when size limits are reached</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>ILM Policy:</b> Configure an ILM policy to:
-    /// <list type="bullet">
-    /// <item>Roll over indices when they reach ~50GB</item>
-    /// <item>Move indices to warm storage after 7 days</item>
-    /// <item>Delete indices after 30 days (or your retention period)</item>
+    /// <item>Must match the pattern <c>logs-*</c> for Elasticsearch index templates</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -227,17 +195,12 @@ public record ElasticOptionsEntity
     /// <item><see cref="Uri"/> is not null or whitespace</item>
     /// <item><see cref="Uri"/> is a well-formed URI</item>
     /// <item><see cref="IndexPrefix"/> is not null or whitespace</item>
-    /// <item>If <see cref="Username"/> is provided, <see cref="Password"/> should also be provided</item>
     /// </list>
     /// </para>
     /// <para>
-    /// This method is called by the DI extension when registering Elasticsearch logging
+    /// This method is called by the DI extension when registering logging
     /// services. If validation fails, an <see cref="ArgumentException"/> is thrown during
     /// service registration to fail fast before the application starts.
-    /// </para>
-    /// <para>
-    /// <b>Note:</b> This method does not attempt to connect to the Elasticsearch cluster.
-    /// Connection validation occurs when the first log is written or when health checks run.
     /// </para>
     /// </remarks>
     public bool IsValid()
@@ -257,26 +220,23 @@ public record ElasticOptionsEntity
             return false;
         }
 
-        // If username is provided, password should also be provided (but not strictly required)
-        // Some Elasticsearch setups allow username-only auth with API keys
-
         return true;
     }
 
     /// <summary>
-    /// Returns a string representation of the Elasticsearch options for logging purposes.
+    /// Returns a string representation of the logging options for logging purposes.
     /// </summary>
     /// <returns>
     /// A string containing the key configuration properties, excluding sensitive data.
     /// </returns>
     /// <remarks>
-    /// This method is useful for logging the Elasticsearch configuration on startup without
+    /// This method is useful for logging the logging configuration on startup without
     /// exposing sensitive credentials. It includes the URI and index prefix, but only
     /// indicates whether authentication is configured (not the actual credentials).
     /// </remarks>
     public override string ToString()
     {
         bool hasAuth = !string.IsNullOrWhiteSpace(Username);
-        return $"ElasticOptionsEntity {{ Uri = {Uri}, IndexPrefix = {IndexPrefix}, Authentication configured = {hasAuth} }}";
+        return $"LoggingOptionsEntity {{ Uri = {Uri}, IndexPrefix = {IndexPrefix}, Authentication configured = {hasAuth} }}";
     }
 }

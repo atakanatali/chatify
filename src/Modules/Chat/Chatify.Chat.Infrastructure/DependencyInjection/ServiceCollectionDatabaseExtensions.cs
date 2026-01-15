@@ -38,19 +38,19 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// <b>Usage Pattern:</b>
 /// <code><![CDATA[
 /// // In Program.cs
-/// builder.Services.AddDistributedDatabase(
+/// builder.Services.AddDatabase(
 ///     builder.Configuration
 /// );
 /// ]]></code>
 /// </para>
 /// <para>
 /// <b>Configuration Section:</b> By default, this extension reads from the
-/// <c>"Chatify:Scylla"</c> configuration section. Ensure your appsettings.json
+/// <c>"Chatify:Database"</c> configuration section. Ensure your appsettings.json
 /// or environment variables provide the required configuration:
 /// <code><![CDATA[
 /// {
 ///   "Chatify": {
-///     "Scylla": {
+///     "Database": {
 ///       "ContactPoints": "scylla-node1:9042,scylla-node2:9042",
 ///       "Keyspace": "chatify",
 ///       "Username": "chatify_user",
@@ -61,7 +61,7 @@ namespace Chatify.Chat.Infrastructure.DependencyInjection;
 /// ]]></code>
 /// </para>
 /// </remarks>
-public static class ServiceCollectionScyllaExtensions
+public static class ServiceCollectionDatabaseExtensions
 {
     /// <summary>
     /// Registers Chatify distributed database infrastructure services with the dependency
@@ -95,7 +95,7 @@ public static class ServiceCollectionScyllaExtensions
     /// </para>
     /// <para>
     /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Scylla"</c> section to <see cref="ScyllaOptionsEntity"/> and
+    /// <c>"Chatify:Database"</c> section to <see cref="ScyllaOptionsEntity"/> and
     /// validates all required fields before registration.
     /// </para>
     /// <para>
@@ -119,28 +119,28 @@ public static class ServiceCollectionScyllaExtensions
     /// binding and validation, and registers placeholder service implementations.
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddDistributedDatabase(
+    public static IServiceCollection AddDatabase(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         GuardUtility.NotNull(services);
         GuardUtility.NotNull(configuration);
 
-        var scyllaSection = configuration.GetSection("Chatify:Scylla");
-        var scyllaOptions = scyllaSection.Get<ScyllaOptionsEntity>()
+        var databaseSection = configuration.GetSection("Chatify:Database");
+        var databaseOptions = databaseSection.Get<ScyllaOptionsEntity>()
             ?? new ScyllaOptionsEntity();
 
-        if (!scyllaOptions.IsValid())
+        if (!databaseOptions.IsValid())
         {
             throw new ArgumentException(
                 $"Invalid distributed database configuration. " +
-                $"Please check the 'Chatify:Scylla' configuration section. " +
+                $"Please check the 'Chatify:Database' configuration section. " +
                 $"Required fields: ContactPoints, Keyspace. " +
-                $"Provided options: {scyllaOptions}",
+                $"Provided options: {databaseOptions}",
                 nameof(configuration));
         }
 
-        services.AddSingleton(scyllaOptions);
+        services.AddSingleton(databaseOptions);
         services.AddSingleton<IChatHistoryRepository, ChatHistoryRepository>();
 
         return services;

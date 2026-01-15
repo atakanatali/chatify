@@ -1,4 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!-- All properties and package references are inherited from Directory.Build.props -->
+
   <ItemGroup>
     <ProjectReference Include="../Chatify.Chat.Domain/Chatify.Chat.Domain.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />
