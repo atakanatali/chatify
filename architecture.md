@@ -277,31 +277,131 @@ builder.Services.AddHostedService<BackgroundServices.ChatBroadcastBackgroundServ
 **Options:** `RedisOptionsEntity`
 - `ConnectionString` - Redis connection string
 
-**DI Extension:** `ServiceCollectionRedisExtensions.AddRedisChatify(IConfiguration)`
+**DI Extension:** `ServiceCollectionCachingExtensions.AddRedisChatify(IConfiguration)` (alias: `AddCaching`)
 
 **Registered Services:**
 - `RedisOptionsEntity` (singleton) - Configuration options
-- `RedisPresenceService` (singleton) - Implements `IPresenceService`
-- `RedisRateLimitService` (singleton) - Implements `IRateLimitService`
-- Future: `IConnectionMultiplexer` registration, caching services
+- `IConnectionMultiplexer` (singleton) - Redis connection multiplexer, disposed on shutdown
+- `PresenceService` (singleton) - Implements `IPresenceService` with Redis backend
+- `RateLimitService` (singleton) - Implements `IRateLimitService` (placeholder)
+- `PodIdentityService` (singleton) - Identifies the current pod instance
 
-**Implementation Status:** Placeholder (logs and throws `NotImplementedException`)
+**Implementation Status:** Presence tracking implemented with full Redis operations
 
-**Configuration Section:** `Chatify:Redis`
+**Configuration Section:** `Chatify:Caching`
 
 ```json
 {
   "Chatify": {
-    "Redis": {
+    "Caching": {
       "ConnectionString": "localhost:6379"
     }
   }
 }
 ```
 
-**Data Structures:**
-- Presence: `presence:user:{userId}` (set of connection IDs with TTL)
-- Rate Limiting: `ratelimit:{key}` (sorted set with sliding window)
+**Redis Key Semantics:**
+
+| Key Pattern | Type | Value | TTL | Purpose |
+|-------------|------|-------|-----|---------|
+| `presence:user:{userId}` | Sorted Set | `{podId}:{connectionId}` with score = timestamp | 60 seconds | Tracks all active connections for a user |
+| `route:{userId}:{connectionId}` | String | `podId` | 60 seconds | O(1) lookup for pod routing |
+
+**Presence Data Structure Details:**
+
+```
+# User "user123" connected on "pod-a" with connection "conn1"
+ZADD presence:user:user123 1704110400 "pod-a:conn1"
+EXPIRE presence:user:user123 60
+
+# Set routing key for pod lookup
+SETEX route:user123:conn1 60 "pod-a"
+
+# User "user123" connects again on "pod-b" with connection "conn2"
+ZADD presence:user:user123 1704110460 "pod-b:conn2"
+EXPIRE presence:user:user123 60
+
+# Set routing key for second connection
+SETEX route:user123:conn2 60 "pod-b"
+
+# User "user123" now has 2 connections
+ZRANGE presence:user:user123 0 -1
+# Results: ["pod-a:conn1", "pod-b:conn2"]
+
+# Check if user is online (has any connections)
+EXISTS presence:user:user123
+# Result: 1 (online)
+
+# Get all connection IDs for a user
+ZRANGE presence:user:user123 0 -1
+# Parse results to extract connection IDs
+
+# User disconnects from "pod-a"
+ZREM presence:user:user123 "pod-a:conn1"
+DEL route:user123:conn1
+
+# Check remaining connections
+ZCARD presence:user:user123
+# Result: 1 (still online)
+
+# Last connection disconnects
+ZREM presence:user:user123 "pod-b:conn2"
+DEL route:user123:conn2
+
+# Clean up empty presence set
+DEL presence:user:user123
+```
+
+**TTL Strategy:**
+- Presence keys expire after 60 seconds of inactivity
+- TTL is refreshed on every heartbeat (client ping)
+- If a client disconnects abruptly (network failure), the key expires automatically
+- Graceful disconnects remove the connection immediately via `SetOfflineAsync`
+
+**Multi-Pod Routing:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Multi-Pod Presence Routing                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Redis (Centralized Presence Store)                             │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ presence:user:alice = {                                  │   │
+│  │   "pod-1:conn-abc123",  (score: 1704110400)              │   │
+│  │   "pod-2:conn-def456"   (score: 1704110460)              │   │
+│  │ }                                                         │   │
+│  │ TTL: 60 seconds (refreshed by heartbeat)                 │   │
+│  ├─────────────────────────────────────────────────────────┤   │
+│  │ route:alice:conn-abc123 = "pod-1"                        │   │
+│  │ route:alice:conn-def456 = "pod-2"                        │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│       │                    │                    │               │
+│       │ GET route:...      │                    │               │
+│       ▼                    ▼                    ▼               │
+│  ┌─────────┐        ┌─────────┐        ┌─────────┐             │
+│  │ Pod-1   │        │ Pod-2   │        │ Pod-3   │             │
+│  │         │        │         │        │         │             │
+│  │ conn-   │        │ conn-   │        │ (query  │             │
+│  │ abc123  │        │ def456  │        │  routes) │             │
+│  └─────────┘        └─────────┘        └─────────┘             │
+│                                                                 │
+│  To route message to Alice:                                     │
+│  1. ZRANGE presence:user:alice 0 -1  (get all connections)     │
+│  2. For each connection:                                        │
+│     - GET route:alice:{connectionId}  (get pod ID)             │
+│     - Route message to that pod                                │
+│  3. Pod delivers via SignalR to local connection               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Hub Integration:**
+- `OnConnectedAsync`: Calls `SetOnlineAsync` to register presence
+- `OnDisconnectedAsync`: Calls `SetOfflineAsync` to remove presence
+- Heartbeat: Optional method to refresh TTL for long-lived connections
+
+**Rate Limiting:** `ratelimit:{key}` (sorted set with sliding window) - Placeholder implementation
 
 ---
 

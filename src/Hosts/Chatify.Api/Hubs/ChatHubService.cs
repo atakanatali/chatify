@@ -1,5 +1,6 @@
 using Chatify.Chat.Application.Commands.SendChatMessage;
 using Chatify.Chat.Application.Dtos;
+using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Domain;
 using Microsoft.AspNetCore.SignalR;
 
@@ -27,21 +28,31 @@ namespace Chatify.Api.Hubs;
 /// ensuring messages are only broadcast to participants in the same scope.
 /// </para>
 /// <para>
+/// <b>Presence Integration:</b> The hub integrates with <see cref="IPresenceService"/>
+/// to track user connections across all pods in the deployment. This enables:
+/// <list type="bullet">
+/// <item>Online/offline status tracking</item>
+/// <item>Multi-connection support (same user on multiple devices)</item>
+/// <item>Automatic cleanup via TTL on abrupt disconnects</item>
+/// </list>
+/// </para>
+/// <para>
 /// <b>Message Flow:</b>
 /// <list type="number">
+/// <item>Client connects and registers presence via <see cref="OnConnectedAsync"/></item>
 /// <item>Client calls <see cref="JoinScopeAsync"/> to join a conversation</item>
 /// <item>Client calls <see cref="SendAsync"/> to send a message</item>
 /// <item>Hub invokes <see cref="SendChatMessageCommandHandler"/> to process the message</item>
 /// <item>Message is produced to Kafka for persistence and fan-out</item>
 /// <item>Message is broadcast to all clients in the scope via SignalR</item>
-/// <item>Client calls <see cref="LeaveScopeAsync"/> to leave the conversation</item>
+/// <item>Client disconnects and removes presence via <see cref="OnDisconnectedAsync"/></item>
 /// </list>
 /// </para>
 /// <para>
 /// <b>Connection Lifecycle:</b> SignalR automatically manages connections.
 /// When a client disconnects unexpectedly, they are automatically removed
-/// from all groups. Explicit leave operations are provided for graceful
-/// disconnects.
+/// from all groups. The presence service handles connection tracking with
+/// TTL-based expiration for graceful handling of network failures.
 /// </para>
 /// <para>
 /// <b>Client Example:</b>
@@ -81,6 +92,15 @@ public sealed class ChatHubService : Hub
     private readonly SendChatMessageCommandHandler _sendChatMessageCommandHandler;
 
     /// <summary>
+    /// The presence service for tracking user connections across pods.
+    /// </summary>
+    /// <remarks>
+    /// This service manages user online/offline status in Redis, enabling
+    /// distributed presence tracking across all pod instances.
+    /// </remarks>
+    private readonly IPresenceService _presenceService;
+
+    /// <summary>
     /// The logger used for diagnostic and audit logging.
     /// </summary>
     /// <remarks>
@@ -94,6 +114,10 @@ public sealed class ChatHubService : Hub
     /// </summary>
     /// <param name="sendChatMessageCommandHandler">
     /// The command handler for processing send chat message commands.
+    /// Must not be null.
+    /// </param>
+    /// <param name="presenceService">
+    /// The presence service for tracking user connections.
     /// Must not be null.
     /// </param>
     /// <param name="logger">
@@ -110,10 +134,13 @@ public sealed class ChatHubService : Hub
     /// </remarks>
     public ChatHubService(
         SendChatMessageCommandHandler sendChatMessageCommandHandler,
+        IPresenceService presenceService,
         ILogger<ChatHubService> logger)
     {
         _sendChatMessageCommandHandler = sendChatMessageCommandHandler
             ?? throw new ArgumentNullException(nameof(sendChatMessageCommandHandler));
+        _presenceService = presenceService
+            ?? throw new ArgumentNullException(nameof(presenceService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -207,7 +234,7 @@ public sealed class ChatHubService : Hub
     /// <b>Client Usage:</b>
     /// <code><![CDATA[
     /// await connection.invoke("LeaveScopeAsync", "general");
-   /// // Client no longer receives messages from "general" scope
+    /// // Client no longer receives messages from "general" scope
     /// ]]></code>
     /// </para>
     /// </remarks>
@@ -275,15 +302,6 @@ public sealed class ChatHubService : Hub
     ///     text: "Hello, world!"
     /// });
     /// ]]></code>
-    /// </para>
-    /// <para>
-    /// <b>TODO Items:</b>
-    /// <list type="bullet">
-    /// <item>Extract sender ID from JWT claims or session context</item>
-    /// <item>Implement broadcast of sent message to scope group</item>
-    /// <item>Add return value to indicate success/failure to client</item>
-    /// <item>Consider using strongly-typed SignalR with interfaces</item>
-    /// </list>
     /// </para>
     /// </remarks>
     public async Task SendAsync(ChatSendRequestDto request)
@@ -369,19 +387,59 @@ public sealed class ChatHubService : Hub
     /// A <see cref="Task"/> representing the asynchronous operation.
     /// </returns>
     /// <remarks>
-    /// This method is overridden to log connection events for monitoring
-    /// and debugging. Connection lifecycle logging is essential for
-    /// understanding real-time system behavior.
+    /// <para>
+    /// <b>Purpose:</b> This method is overridden to register the user's presence
+    /// when they connect. It tracks the connection in Redis, enabling:
+    /// <list type="bullet">
+    /// <item>Online/offline status across all pods</item>
+    /// <item>Multi-connection tracking (same user on multiple devices)</item>
+    /// <item>Automatic cleanup via TTL for abrupt disconnects</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Presence Registration:</b> The connection is registered with the user ID
+    /// (extracted from claims or connection ID) and the unique connection ID.
+    /// This allows tracking multiple connections per user.
+    /// </para>
+    /// <para>
+    /// <b>Error Handling:</b> Presence registration failures are logged but do not
+    /// prevent the connection from succeeding. This ensures the chat remains
+    /// functional even if Redis is temporarily unavailable.
+    /// </para>
     /// </remarks>
     public override async Task OnConnectedAsync()
     {
         var connectionId = Context.ConnectionId;
+        var userId = Context.User?.FindFirst("sub")?.Value
+            ?? Context.User?.FindFirst("user_id")?.Value
+            ?? $"anon_{connectionId}";
         var user = Context.User?.Identity?.Name ?? "anonymous";
 
         _logger.LogInformation(
-            "Client connected. ConnectionId: {ConnectionId}, User: {User}",
+            "Client connected. ConnectionId: {ConnectionId}, UserId: {UserId}, User: {User}",
             connectionId,
+            userId,
             user);
+
+        try
+        {
+            // Register the user's presence in Redis
+            await _presenceService.SetOnlineAsync(userId, connectionId, Context.ConnectionAborted);
+
+            _logger.LogDebug(
+                "Presence registered for user {UserId} with connection {ConnectionId}",
+                userId,
+                connectionId);
+        }
+        catch (Exception ex)
+        {
+            // Log presence registration failure but don't fail the connection
+            _logger.LogError(
+                ex,
+                "Failed to register presence for user {UserId} with connection {ConnectionId}",
+                userId,
+                connectionId);
+        }
 
         await base.OnConnectedAsync();
     }
@@ -397,34 +455,74 @@ public sealed class ChatHubService : Hub
     /// </returns>
     /// <remarks>
     /// <para>
-    /// This method is overridden to log disconnection events for monitoring
-    /// and debugging. SignalR automatically removes disconnected clients
-    /// from all groups.
+    /// <b>Purpose:</b> This method is overridden to remove the user's presence
+    /// when they disconnect. It updates Redis to track the disconnection.
     /// </para>
     /// <para>
-    /// The <paramref name="exception"/> parameter contains information about
-    /// unexpected disconnects, enabling error tracking and diagnostics.
+    /// <b>Presence Cleanup:</b> The connection is removed from the user's presence
+    /// set. If this was the last connection, the user is marked as offline.
+    /// </para>
+    /// <para>
+    /// <b>Graceful vs Abrupt Disconnect:</b>
+    /// <list type="bullet">
+    /// <item><b>Graceful:</b> User explicitly disconnects (logout, close tab with notification)</item>
+    /// <item><b>Abrupt:</b> Network failure, browser crash, tab close without notification</item>
+    /// </list>
+    /// For abrupt disconnects, the presence key will expire via TTL after 60 seconds.
+    /// </para>
+    /// <para>
+    /// <b>Error Handling:</b> Presence cleanup failures are logged but do not
+    /// affect the disconnect process. TTL will eventually clean up orphaned keys.
+    /// </para>
+    /// <para>
+    /// <b>SignalR Group Cleanup:</b> SignalR automatically removes disconnected
+    /// clients from all groups. No manual group cleanup is required.
     /// </para>
     /// </remarks>
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var connectionId = Context.ConnectionId;
+        var userId = Context.User?.FindFirst("sub")?.Value
+            ?? Context.User?.FindFirst("user_id")?.Value
+            ?? $"anon_{connectionId}";
         var user = Context.User?.Identity?.Name ?? "anonymous";
 
         if (exception is not null)
         {
             _logger.LogWarning(
                 exception,
-                "Client disconnected with error. ConnectionId: {ConnectionId}, User: {User}",
+                "Client disconnected with error. ConnectionId: {ConnectionId}, UserId: {UserId}, User: {User}",
                 connectionId,
+                userId,
                 user);
         }
         else
         {
             _logger.LogInformation(
-                "Client disconnected. ConnectionId: {ConnectionId}, User: {User}",
+                "Client disconnected. ConnectionId: {ConnectionId}, UserId: {UserId}, User: {User}",
                 connectionId,
+                userId,
                 user);
+        }
+
+        try
+        {
+            // Remove the user's presence from Redis
+            await _presenceService.SetOfflineAsync(userId, connectionId, Context.ConnectionAborted);
+
+            _logger.LogDebug(
+                "Presence removed for user {UserId} with connection {ConnectionId}",
+                userId,
+                connectionId);
+        }
+        catch (Exception ex)
+        {
+            // Log presence cleanup failure but don't fail the disconnect
+            _logger.LogError(
+                ex,
+                "Failed to remove presence for user {UserId} with connection {ConnectionId}",
+                userId,
+                connectionId);
         }
 
         await base.OnDisconnectedAsync(exception);
