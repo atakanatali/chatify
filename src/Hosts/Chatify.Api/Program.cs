@@ -5,76 +5,54 @@ using Chatify.Api.Hubs;
 using Chatify.Api.Middleware;
 using Serilog;
 
-namespace Chatify.Api;
+var builder = WebApplication.CreateBuilder(args);
 
-public static class Program
+// Serilog
+builder.Host.UseSerilog((context, loggerConfiguration) =>
 {
-    public static void Main(string[] args)
-    {
-        CreateHostBuilder(args).Build().Run();
-    }
+    loggerConfiguration
+        .ReadFrom.Configuration(context.Configuration)
+        .ConfigureChatifySerilog(context.Configuration);
+});
 
-    public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
-            .UseSerilog((context, loggerConfiguration) =>
-            {
-                loggerConfiguration
-                    .ReadFrom.Configuration(context.Configuration)
-                    .ConfigureChatifySerilog(context.Configuration);
-            })
-            .ConfigureWebHostDefaults(webBuilder =>
-            {
-                webBuilder.UseStartup<Startup>();
-            });
+var configuration = builder.Configuration;
 
-    public class Startup
-    {
-        public IConfiguration Configuration { get; }
+// BuildingBlocks
+builder.Services.AddSingleton<IClockService, SystemClockService>();
+builder.Services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
 
-        public Startup(IConfiguration configuration)
-        {
-            Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-        }
+// Logging
+builder.Services.AddChatifyLogging(configuration);
 
-        public void ConfigureServices(IServiceCollection services)
-        {
-            // BuildingBlocks
-            services.AddSingleton<IClockService, SystemClockService>();
-            services.AddSingleton<ICorrelationContextAccessor, CorrelationContextAccessor>();
+// Infrastructure Providers
+builder.Services.AddDatabase(configuration);
+builder.Services.AddCaching(configuration);
+builder.Services.AddMessageBroker(configuration);
 
-            // Logging
-            services.AddChatifyLogging(Configuration);
+// Application Services
+builder.Services.AddChatifyChatApplication();
 
-            // Infrastructure Providers
-            services.AddDatabase(Configuration);
-            services.AddCaching(Configuration);
-            services.AddMessageBroker(Configuration);
+// ASP.NET Core Services
+builder.Services.AddControllers();
+builder.Services.AddSignalR();
 
-            // Application Services
-            services.AddChatifyChatApplication();
+var app = builder.Build();
 
-            // ASP.NET Core Services
-            services.AddControllers();
-            services.AddSignalR();
-        }
-
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
-        {
-            if (env.IsDevelopment())
-            {
-                app.UseDeveloperExceptionPage();
-            }
-
-            app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
-            app.UseMiddleware<CorrelationIdMiddleware>();
-            app.UseRouting();
-            app.UseAuthorization();
-
-            app.UseEndpoints(endpoints =>
-            {
-                endpoints.MapControllers();
-                endpoints.MapHub<ChatHubService>("/hubs/chat");
-            });
-        }
-    }
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
 }
+
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+app.UseMiddleware<CorrelationIdMiddleware>();
+app.UseRouting();
+
+// Eğer authentication kullanıyorsan aç:
+// app.UseAuthentication();
+
+app.UseAuthorization();
+
+app.MapControllers();
+app.MapHub<ChatHubService>("/hubs/chat");
+
+app.Run();
