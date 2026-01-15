@@ -106,7 +106,7 @@ public static class Program
                 loggerConfiguration
                     .ReadFrom.Configuration(context.Configuration)
                     .Enrich.FromLogContext()
-                    .Enrich.WithEnvironmentName()
+                    .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName)
                     .Enrich.WithMachineName()
                     .Enrich.WithProcessId()
                     .Enrich.WithThreadId()
