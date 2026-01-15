@@ -65,8 +65,9 @@ The HTTP request pipeline is configured in the following order:
 ```
 1. Developer Exception Page (development only)
 2. Global Exception Handling Middleware
+   ├─ Uses ExceptionMappingUtility for consistent ProblemDetails
    ├─ Catches all unhandled exceptions
-   ├─ Logs with correlation ID
+   ├─ Logs with correlation ID to Elasticsearch
    └─ Returns RFC 7807 ProblemDetails
 3. Correlation ID Middleware
    ├─ Extracts X-Correlation-ID header
@@ -79,6 +80,76 @@ The HTTP request pipeline is configured in the following order:
    ├─ Controllers (/api/*)
    └─ SignalR Hubs (/hubs/chat)
 ```
+
+### Global Error Handling
+
+Chatify implements comprehensive global error handling across all layers:
+
+#### HTTP Pipeline (Middleware)
+- **GlobalExceptionHandlingMiddleware** catches all unhandled exceptions from HTTP requests
+- Uses **ExceptionMappingUtility** to map exceptions to RFC 7807 ProblemDetails
+- Logs all errors to Elasticsearch with correlation IDs via **ILogService**
+- Returns consistent error responses with appropriate HTTP status codes
+
+#### Background Services
+Both background services implement two-level exception handling:
+
+1. **Outer Loop (Service Level):** Catches unexpected exceptions, logs to Elasticsearch, and lets Kubernetes restart the service
+2. **Inner Loop (Operation Level):** Handles per-operation errors with exponential backoff retry
+
+**ChatHistoryWriterBackgroundService:**
+```csharp
+// Outer loop - Prevents service termination
+try
+{
+    await ExecuteConsumeLoopAsync(stoppingToken);
+}
+catch (Exception ex)
+{
+    _logService.Error(ex, "Fatal error, will restart", context);
+    throw; // Let Kubernetes restart
+}
+
+// Inner loop - Handles per-operation errors
+while (!stoppingToken.IsCancellationRequested)
+{
+    try
+    {
+        var result = await _processor.ProcessAsync(message, stoppingToken);
+        backoff.Reset(); // Success - reset backoff
+    }
+    catch (Exception ex) when (IsTransientError(ex))
+    {
+        _logService.Error(ex, "Transient error, retrying with backoff", context);
+        await Task.Delay(backoff.NextDelayWithJitter(), stoppingToken);
+    }
+}
+```
+
+**ChatBroadcastBackgroundService:**
+- Similar two-level error handling pattern
+- Deserialization errors log payload preview and continue to next message
+- All Kafka/SignalR exceptions logged to Elasticsearch
+- Exponential backoff prevents overwhelming external services
+
+#### Exception Mapping
+
+**ExceptionMappingUtility** provides centralized exception-to-ProblemDetails mapping:
+
+| Exception Type | HTTP Status | Error Code Pattern |
+|----------------|-------------|-------------------|
+| ArgumentException, ArgumentNullException | 400 | Validation errors |
+| UnauthorizedAccessException | 401 | Authentication/Authorization |
+| KeyNotFoundException | 404 | Resource not found |
+| InvalidOperationException | 409 | State conflicts |
+| TimeoutException | 504 | External timeouts |
+| Other exceptions | 500 | Unexpected errors |
+
+**Logging Guarantees:**
+- No Kafka/Redis/Scylla exception leaks unlogged
+- All background service errors logged to Elasticsearch via ILogService
+- Correlation IDs included in all error logs
+- Structured context includes partition, offset, consumer group, etc.
 
 ## Request Flow
 

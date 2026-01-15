@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using Chatify.BuildingBlocks.Primitives;
 using Microsoft.AspNetCore.Mvc;
@@ -31,7 +30,7 @@ namespace Chatify.Api.Middleware;
 /// </para>
 /// <para>
 /// <b>Exception Categorization:</b> Different exception types result in
-/// different HTTP status codes and error messages:
+/// different HTTP status codes and error messages via <see cref="ExceptionMappingUtility"/>:
 /// <list type="table">
 /// <listheader>
 /// <term>Exception Type</term>
@@ -196,37 +195,29 @@ public sealed class GlobalExceptionHandlingMiddleware
     /// <para>
     /// <b>Handling Process:</b>
     /// <list type="number">
-    /// <item>Determine the appropriate HTTP status code based on exception type</item>
-    /// <item>Create a ProblemDetails object with error information</item>
-    /// <item>Log the full exception details with correlation ID</item>
+    /// <item>Map exception to ProblemDetails using <see cref="ExceptionMappingUtility"/></item>
+    /// <item>Log the exception with full details and correlation ID</item>
     /// <item>Set the response status code and content type</item>
     /// <item>Serialize and write the ProblemDetails to the response</item>
     /// </list>
     /// </para>
     /// <para>
-    /// <b>Status Code Mapping:</b>
-    /// <list type="table">
-    /// <listheader><term>Exception Type</term><description>Status Code</description></listheader>
-    /// <item><term>ArgumentException</term><description>400</description></item>
-    /// <item><term>ArgumentNullException</term><description>400</description></item>
-    /// <item><term>UnauthorizedAccessException</term><description>401</description></item>
-    /// <item><term>KeyNotFoundException</term><description>404</description></item>
-    /// <item><term>InvalidOperationException</term><description>409</description></item>
-    /// <item><term>TimeoutException</term><description>504</description></item>
-    /// <item><term>Other</term><description>500</description></item>
-    /// </list>
+    /// <b>Status Code Mapping:</b> The status code is determined by
+    /// <see cref="ExceptionMappingUtility.MapToProblemDetails"/> based on the exception type.
     /// </para>
     /// </remarks>
     private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
-        // Determine the appropriate status code and title based on exception type
-        var (statusCode, title) = GetStatusCodeAndTitle(exception);
+        // Map exception to ProblemDetails using the centralized utility
+        var problemDetails = ExceptionMappingUtility.MapToProblemDetails(
+            exception,
+            context.Request.Path,
+            _env.IsDevelopment());
+
+        var statusCode = problemDetails.Status ?? 500;
 
         // Log the exception with full details
         LogException(context, exception, statusCode);
-
-        // Create ProblemDetails response
-        var problemDetails = CreateProblemDetails(context, exception, statusCode, title);
 
         // Set response properties
         context.Response.StatusCode = statusCode;
@@ -241,162 +232,6 @@ public sealed class GlobalExceptionHandlingMiddleware
 
         var json = JsonSerializer.Serialize(problemDetails, options);
         await context.Response.WriteAsync(json);
-    }
-
-    /// <summary>
-    /// Determines the appropriate HTTP status code and title for a given exception.
-    /// </summary>
-    /// <param name="exception">
-    /// The exception to evaluate.
-    /// </param>
-    /// <returns>
-    /// A tuple containing the HTTP status code and a descriptive title.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// This method maps exception types to appropriate HTTP status codes following
-    /// RFC 7231 guidelines. The mapping ensures clients receive semantically
-    /// correct error responses.
-    /// </para>
-    /// <para>
-    /// <b>Default Behavior:</b> Unrecognized exception types default to
-    /// 500 Internal Server Error to prevent information leakage.
-    /// </para>
-    /// </remarks>
-    private static (int StatusCode, string Title) GetStatusCodeAndTitle(Exception exception)
-    {
-        return exception switch
-        {
-            UnauthorizedAccessException => ((int)HttpStatusCode.Unauthorized, "Unauthorized"),
-            KeyNotFoundException => ((int)HttpStatusCode.NotFound, "Not Found"),
-            InvalidOperationException => ((int)HttpStatusCode.Conflict, "Conflict"),
-            TimeoutException => ((int)HttpStatusCode.GatewayTimeout, "Gateway Timeout"),
-            ArgumentNullException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
-            ArgumentException => ((int)HttpStatusCode.BadRequest, "Bad Request"),
-            _ => ((int)HttpStatusCode.InternalServerError, "Internal Server Error")
-        };
-    }
-
-    /// <summary>
-    /// Creates a ProblemDetails object with error information for the client.
-    /// </summary>
-    /// <param name="context">
-    /// The HTTP context for the current request.
-    /// </param>
-    /// <param name="exception">
-    /// The exception that occurred.
-    /// </param>
-    /// <param name="statusCode">
-    /// The HTTP status code to return.
-    /// </param>
-    /// <param name="title">
-    /// A short, human-readable summary of the problem type.
-    /// </param>
-    /// <returns>
-    /// A <see cref="ProblemDetails"/> object containing error information.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// <b>Production vs Development:</b> In production environments, only
-    /// generic error information is included to prevent information leakage.
-    /// In development, additional details like stack traces may be included
-    /// to aid debugging.
-    /// </para>
-    /// <para>
-    /// <b>RFC 7807 Compliance:</b> The ProblemDetails object follows the
-    /// RFC 7807 specification for problem details in HTTP APIs.
-    /// </para>
-    /// </remarks>
-    private ProblemDetails CreateProblemDetails(
-        HttpContext context,
-        Exception exception,
-        int statusCode,
-        string title)
-    {
-        var problemDetails = new ProblemDetails
-        {
-            Type = $"https://tools.ietf.org/html/rfc7231#section-{GetStatusCodeSection(statusCode)}",
-            Title = title,
-            Status = statusCode,
-            Detail = GetDetailMessage(exception, statusCode),
-            Instance = context.Request.Path
-        };
-
-        // In development, include additional debug information
-        if (_env.IsDevelopment())
-        {
-            problemDetails.Extensions["stackTrace"] = exception.StackTrace;
-            problemDetails.Extensions["innerException"] = exception.InnerException?.Message;
-        }
-
-        return problemDetails;
-    }
-
-    /// <summary>
-    /// Gets the appropriate detail message for an exception based on environment and status code.
-    /// </summary>
-    /// <param name="exception">
-    /// The exception that occurred.
-    /// </param>
-    /// <param name="statusCode">
-    /// The HTTP status code being returned.
-    /// </param>
-    /// <returns>
-    /// A string containing the detail message for the response.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// In development, the actual exception message is returned for debugging.
-    /// In production, a generic message is returned to prevent information leakage.
-    /// </para>
-    /// </remarks>
-    private string GetDetailMessage(Exception exception, int statusCode)
-    {
-        if (_env.IsDevelopment())
-        {
-            return exception.Message;
-        }
-
-        return statusCode switch
-        {
-            400 => "The request was invalid or missing required parameters.",
-            401 => "Authentication is required to access this resource.",
-            404 => "The requested resource was not found.",
-            409 => "The request could not be completed due to a conflict.",
-            504 => "The request timed out while processing.",
-            _ => "An error occurred while processing your request. Please try again later."
-        };
-    }
-
-    /// <summary>
-    /// Gets the RFC 7231 section identifier for a given status code.
-    /// </summary>
-    /// <param name="statusCode">
-    /// The HTTP status code.
-    /// </param>
-    /// <returns>
-    /// A string containing the RFC 7231 section identifier (e.g., "6.5.1" for 400).
-    /// </returns>
-    /// <remarks>
-    /// This method maps status codes to their corresponding RFC 7231 sections,
-    /// which are used in the ProblemDetails type URI to provide standardized
-    /// error type references.
-    /// </remarks>
-    private static string GetStatusCodeSection(int statusCode)
-    {
-        return statusCode switch
-        {
-            400 => "6.5.1",
-            401 => "6.5.2",
-            403 => "6.5.3",
-            404 => "6.5.4",
-            409 => "6.5.8",
-            500 => "6.6.1",
-            502 => "6.6.3",
-            503 => "6.6.4",
-            504 => "6.6.5",
-            _ => "6.6.1"
-        };
     }
 
     /// <summary>
@@ -418,7 +253,7 @@ public sealed class GlobalExceptionHandlingMiddleware
     /// debugging and incident response.
     /// </para>
     /// <para>
-    /// The log level is determined by the status code:
+    /// The log level is determined by <see cref="ExceptionMappingUtility.IsServerError"/>:
     /// <list type="bullet">
     /// <item>Client errors (4xx): Warning</item>
     /// <item>Server errors (5xx): Error</item>
@@ -442,7 +277,8 @@ public sealed class GlobalExceptionHandlingMiddleware
 
         var message = $"Unhandled exception occurred. CorrelationId: {correlationId}, Path: {path}, Method: {method}, StatusCode: {statusCode}";
 
-        if (statusCode >= 500)
+        // Use ExceptionMappingUtility to determine log level
+        if (ExceptionMappingUtility.IsServerError(exception))
         {
             _logService.Error(exception, message, logContext);
         }

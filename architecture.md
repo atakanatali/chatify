@@ -77,6 +77,147 @@ The `Chatify.BuildingBlocks` project provides foundational types and utilities u
 - **Usage**: Register `CorrelationContextAccessor` as singleton. Middleware extracts/generates ID; services read from accessor.
 - **Location**: `Chatify.BuildingBlocks.Primitives.ICorrelationContextAccessor`, `Chatify.BuildingBlocks.Primitives.CorrelationContextAccessor`, `Chatify.BuildingBlocks.Primitives.CorrelationIdUtility`
 
+### Global Error Handling
+
+Chatify implements comprehensive global error handling across all layers to ensure no exception leaks unlogged and all failures are handled gracefully.
+
+#### ExceptionMappingUtility (BuildingBlocks)
+
+**Location:** `Chatify.BuildingBlocks.Primitives.ExceptionMapping.ExceptionMappingUtility`
+
+**Purpose:** Provides centralized exception-to-ProblemDetails mapping for consistent error responses across HTTP and background services.
+
+**Key Methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `MapToProblemDetails(exception, instance, isDevelopment)` | Maps exception to RFC 7807 ProblemDetails with appropriate status code |
+| `IsServerError(exception)` | Determines if exception maps to 5xx or 4xx status code |
+| `GetStatusCode(exception)` | Returns HTTP status code for exception type |
+
+**Exception Mapping Table:**
+
+| Exception Type | HTTP Status | RFC 7231 Section |
+|----------------|-------------|------------------|
+| `ArgumentException`, `ArgumentNullException` | 400 Bad Request | 6.5.1 |
+| `UnauthorizedAccessException` | 401 Unauthorized | 6.5.2 |
+| `KeyNotFoundException` | 404 Not Found | 6.5.4 |
+| `InvalidOperationException` | 409 Conflict | 6.5.8 |
+| `TimeoutException` | 504 Gateway Timeout | 6.6.5 |
+| Other exceptions | 500 Internal Server Error | 6.6.1 |
+
+**Security Features:**
+- Production environments return generic error messages to prevent information leakage
+- Development environments include stack traces and exception details for debugging
+- All error types reference RFC 7231 sections for standardized error documentation
+
+#### HTTP Error Handling (Middleware)
+
+**Location:** `src/Hosts/Chatify.Api/Middleware/GlobalExceptionHandlingMiddleware.cs`
+
+**Responsibilities:**
+- Catches all unhandled exceptions from HTTP request pipeline
+- Logs to Elasticsearch via `ILogService` with correlation IDs
+- Returns RFC 7807 ProblemDetails using `ExceptionMappingUtility`
+- Determines log level based on exception severity (4xx = Warning, 5xx = Error)
+
+**Error Response Format:**
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "The request was invalid or missing required parameters.",
+  "instance": "/api/chat/send"
+}
+```
+
+#### Background Service Error Handling
+
+Both background services implement **two-level exception handling** to ensure resilience and logging:
+
+##### Outer Loop (Service Level)
+- Catches unexpected exceptions that escape inner loops
+- Logs to Elasticsearch with full context (consumer group, topic, partition, offset)
+- Re-throws to let Kubernetes restart the service via pod restart policy
+- Prevents silent failures that could leave services in broken states
+
+##### Inner Loop (Operation Level)
+- Handles per-operation errors (consume, process, broadcast)
+- Applies exponential backoff with jitter to prevent overwhelming external services
+- Distinguishes between transient errors (retry with backoff) and permanent failures (skip message)
+- Logs all errors to Elasticsearch with structured context
+
+**ChatHistoryWriterBackgroundService:**
+```csharp
+// Outer loop - Prevents service termination
+try
+{
+    await ExecuteConsumeLoopAsync(stoppingToken);
+}
+catch (Exception ex)
+{
+    _logService.Error(ex, "Fatal error, will restart", context);
+    throw; // Let Kubernetes restart
+}
+
+// Inner loop - Handles per-operation errors
+while (!stoppingToken.IsCancellationRequested)
+{
+    try
+    {
+        var result = await _processor.ProcessAsync(message, stoppingToken);
+        backoff.Reset(); // Success - reset backoff
+    }
+    catch (Exception ex) when (IsTransientError(ex))
+    {
+        _logService.Error(ex, "Transient error, retrying with backoff", context);
+        await Task.Delay(backoff.NextDelayWithJitter(), stoppingToken);
+    }
+}
+```
+
+**ChatBroadcastBackgroundService:**
+- Similar two-level error handling pattern
+- Deserialization errors log payload preview (truncated to 256 chars) and continue
+- All Kafka/SignalR exceptions logged to Elasticsearch
+- Consumer error handler logs warnings to `ILogService`
+
+#### Logging Guarantees
+
+Chatify ensures **no exception leaks unlogged** through:
+
+1. **HTTP Pipeline:** All unhandled exceptions caught by `GlobalExceptionHandlingMiddleware`
+2. **Background Services:** All exceptions caught by outer/inner loop handlers
+3. **Infrastructure Errors:** All Kafka/Redis/Scylla exceptions logged to Elasticsearch
+4. **Correlation IDs:** All error logs include correlation IDs for distributed tracing
+5. **Structured Context:** Error logs include partition, offset, consumer group, topic for debugging
+
+#### Error Recovery Strategies
+
+| Error Type | Recovery Strategy | Backoff |
+|------------|-------------------|---------|
+| Transient Kafka errors | Retry with exponential backoff | 1s, 2s, 4s, 8s, 16s (max) |
+| Transient ScyllaDB errors | Polly retry (5 attempts) → Consumer backoff | 100ms → 10s (with jitter) |
+| Deserialization errors | Log payload, skip message, continue | N/A |
+| Permanent failures | Log, commit offset, skip message | N/A |
+| Fatal service errors | Log, re-throw, Kubernetes restart | N/A |
+
+#### Integration with Elastic Logging
+
+All error handling integrates with `ILogService` for centralized logging:
+
+```csharp
+// In middleware
+_logService.Error(exception, "Unhandled exception", new { Path, Method, StatusCode });
+
+// In background services
+_logService.Error(exception, "Transient error, retrying", new { Partition, Offset, ConsumerGroupId });
+
+// Consumer error handlers
+_logService.Warn("Message broker consumer error", new { ErrorCode, ErrorReason, IsFatal });
+```
+
 ### Naming Conventions
 All types in BuildingBlocks use postfixes for clarity:
 - Interfaces: `*Service`, `*Accessor`, `*Repository`

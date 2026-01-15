@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Chatify.Api.Hubs;
+using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.Dtos;
 using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Infrastructure.Options;
@@ -42,13 +43,47 @@ namespace Chatify.Api.BackgroundServices;
 /// </list>
 /// </para>
 /// <para>
-/// <b>Error Handling:</b>
+/// <b>Error Handling Strategy:</b>
 /// <list type="bullet">
-/// <item>Consume exceptions are logged to Elasticsearch with full context</item>
-/// <item>Service continues with exponential backoff on errors</item>
+/// <item><b>Outer Loop (Service Level):</b> Catches all unexpected exceptions to prevent service termination</item>
+/// <item><b>Inner Loop (Operation Level):</b> Handles per-message errors with appropriate retry strategies</item>
+/// <item><b>Kafka/SignalR exceptions:</b> Logged to Elasticsearch with full context via <see cref="ILogService"/></item>
+/// <item><b>Backoff after errors:</b> Exponential backoff prevents overwhelming external services</item>
 /// <item>Initial connection failures trigger retry with backoff</item>
 /// <item>Deserialization errors log the offending message for debugging</item>
 /// </list>
+/// </para>
+/// <para>
+/// <b>Two-Level Exception Handling:</b>
+/// <code><![CDATA[
+/// // Outer loop - Prevents service termination
+/// try
+/// {
+///     while (!stoppingToken.IsCancellationRequested)
+///     {
+///         // Inner loop - Handles per-operation errors
+///         try
+///         {
+///             var consumeResult = consumer.Consume(stoppingToken);
+///             await _hubContext.Clients.Group(scopeId).SendAsync("ReceiveMessage", chatEvent);
+///             backoffMs = InitialBackoffMs; // Success - reset backoff
+///         }
+///         catch (OperationCanceledException) { break; } // Graceful shutdown
+///         catch (Exception ex) when (IsTransientError(ex))
+///         {
+///             _logService.Error(ex, "Transient error, retrying with backoff", context);
+///             await Task.Delay(backoffMs, stoppingToken);
+///             backoffMs = Math.Min(backoffMs * 2, MaxBackoffMs);
+///         }
+///     }
+/// }
+/// catch (Exception ex)
+/// {
+///     // Outer loop - Prevents service termination
+///     _logService.Error(ex, "Fatal error in ChatBroadcastBackgroundService, will restart", context);
+///     throw; // Let Kubernetes restart the service
+/// }
+/// ]]></code>
 /// </para>
 /// <para>
 /// <b>Ordering Guarantees:</b>
@@ -142,6 +177,15 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
     private readonly ILogger<ChatBroadcastBackgroundService> _logger;
 
     /// <summary>
+    /// Gets the log service for structured logging with correlation IDs.
+    /// </summary>
+    /// <remarks>
+    /// Logs errors to Elasticsearch with full context and correlation IDs.
+    /// Used for all error scenarios to ensure consistent logging across the service.
+    /// </remarks>
+    private readonly ILogService _logService;
+
+    /// <summary>
     /// Gets the JSON serialization options for deserializing chat events.
     /// </summary>
     /// <remarks>
@@ -161,6 +205,9 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
     /// <param name="podIdentityService">
     /// The pod identity service for unique consumer group generation. Must not be null.
     /// </param>
+    /// <param name="logService">
+    /// The log service for structured logging. Must not be null.
+    /// </param>
     /// <param name="logger">
     /// The logger instance for diagnostic information. Must not be null.
     /// </param>
@@ -176,11 +223,13 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
         KafkaOptionsEntity options,
         IHubContext<ChatHubService> hubContext,
         IPodIdentityService podIdentityService,
+        ILogService logService,
         ILogger<ChatBroadcastBackgroundService> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         _podIdentityService = podIdentityService ?? throw new ArgumentNullException(nameof(podIdentityService));
+        _logService = logService ?? throw new ArgumentNullException(nameof(logService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         _jsonSerializerOptions = new JsonSerializerOptions
@@ -241,6 +290,58 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
             _options.TopicName,
             _options.BootstrapServers);
 
+        // Outer loop: Prevents service termination from unexpected exceptions
+        try
+        {
+            await ExecuteConsumeLoopAsync(consumerGroupId, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Graceful shutdown - normal exit
+            _logger.LogInformation("ChatBroadcastBackgroundService shutdown requested via cancellation token");
+        }
+        catch (Exception ex)
+        {
+            // Fatal error - log and let Kubernetes restart the service
+            _logService.Error(
+                ex,
+                "Fatal error in ChatBroadcastBackgroundService. Service will restart via Kubernetes.",
+                new { ConsumerGroupId = consumerGroupId, Topic = _options.TopicName });
+
+            // Re-throw to let BackgroundService handle it and allow Kubernetes to restart
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Executes the main message consumption loop with inner operation-level error handling.
+    /// </summary>
+    /// <param name="consumerGroupId">
+    /// The unique consumer group ID for this pod instance.
+    /// </param>
+    /// <param name="stoppingToken">
+    /// A cancellation token that signals when the service should stop.
+    /// </param>
+    /// <returns>
+    /// A <see cref="Task"/> representing the asynchronous execution.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Inner Loop Error Handling:</b>
+    /// <list type="bullet">
+    /// <item><b>OperationCanceledException:</b> Graceful shutdown, exit loop</item>
+    /// <item><b>ConsumeException/KafkaException:</b> Transient broker errors, log and retry with backoff</item>
+    /// <item><b>JsonException:</b> Deserialization errors, log message payload and continue</item>
+    /// <item><b>Other exceptions:</b> Unexpected processing errors, log and retry with backoff</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// All errors are logged to Elasticsearch via <see cref="ILogService"/> with full context
+    /// to ensure no errors leak unlogged.
+    /// </para>
+    /// </remarks>
+    private async Task ExecuteConsumeLoopAsync(string consumerGroupId, CancellationToken stoppingToken)
+    {
         var consumerConfig = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
@@ -260,11 +361,9 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
         // Set up error handler for consumer-specific errors
         consumerBuilder.SetErrorHandler((consumer, error) =>
         {
-            _logger.LogError(
+            _logService.Warn(
                 "Message broker consumer error: Code={ErrorCode}, Reason={ErrorReason}, IsFatal={IsFatal}",
-                error.Code,
-                error.Reason,
-                error.IsFatal);
+                new { ErrorCode = error.Code, ErrorReason = error.Reason, IsFatal = error.IsFatal });
         });
 
         // Set up log handler for consumer logs (warnings and above)
@@ -298,11 +397,11 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
         }
         catch (KafkaException ex)
         {
-            _logger.LogError(
+            // Log to Elasticsearch with full context
+            _logService.Error(
                 ex,
-                "Failed to subscribe to topic {TopicName}. BootstrapServers: {BootstrapServers}",
-                _options.TopicName,
-                _options.BootstrapServers);
+                "Failed to subscribe to topic. BootstrapServers: {BootstrapServers}, Topic: {TopicName}",
+                new { BootstrapServers = _options.BootstrapServers, TopicName = _options.TopicName });
 
             // Retry with exponential backoff on initial subscription failure
             await DelayBeforeExitAsync(stoppingToken);
@@ -311,7 +410,7 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
 
         var backoffMs = InitialBackoffMs;
 
-        // Main consume loop
+        // Main consume loop - Inner operation-level error handling
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -340,12 +439,16 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
                 }
                 catch (JsonException ex)
                 {
-                    _logger.LogError(
+                    // Log deserialization error with message payload for debugging
+                    _logService.Error(
                         ex,
-                        "Failed to deserialize chat event at partition {Partition}, offset {Offset}. Payload: {Payload}",
-                        consumeResult.Partition,
-                        consumeResult.Offset,
-                        Encoding.UTF8.GetString(consumeResult.Message.Value));
+                        "Failed to deserialize chat event. Partition: {Partition}, Offset: {Offset}. Skipping message.",
+                        new
+                        {
+                            Partition = consumeResult.Partition,
+                            Offset = consumeResult.Offset,
+                            PayloadPreview = ExtractPayloadPreview(consumeResult.Message.Value)
+                        });
 
                     // Continue processing next message
                     continue;
@@ -353,19 +456,12 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
 
                 if (chatEvent is null)
                 {
-                    _logger.LogWarning(
-                        "Deserialized chat event is null at partition {Partition}, offset {Offset}",
-                        consumeResult.Partition,
-                        consumeResult.Offset);
+                    _logService.Warn(
+                        "Deserialized chat event is null. Partition: {Partition}, Offset: {Offset}. Skipping message.",
+                        new { Partition = consumeResult.Partition, Offset = consumeResult.Offset });
 
                     continue;
                 }
-
-                // Create enriched event with broker metadata
-                var enrichedEvent = new EnrichedChatEventDto(
-                    chatEvent,
-                    consumeResult.Partition,
-                    consumeResult.Offset.Value);
 
                 _logger.LogInformation(
                     "Broadcasting chat event {MessageId} to scope {ScopeId} (partition {Partition}, offset {Offset})",
@@ -402,9 +498,11 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
             }
             catch (Exception ex) when (ex is ConsumeException or KafkaException)
             {
-                _logger.LogError(
+                // Message broker transient errors - log to Elasticsearch and retry with backoff
+                _logService.Error(
                     ex,
-                    "Message broker error in consume loop. Retrying with backoff...");
+                    "Message broker error in consume loop. Retrying with exponential backoff.",
+                    new { ConsumerGroupId = consumerGroupId, Topic = _options.TopicName });
 
                 await Task.Delay(backoffMs, stoppingToken);
 
@@ -413,9 +511,11 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(
+                // Unexpected processing errors - log to Elasticsearch and retry with backoff
+                _logService.Error(
                     ex,
-                    "Unexpected error in consume loop. Retrying with backoff...");
+                    "Unexpected error in consume loop. Retrying with exponential backoff.",
+                    new { ConsumerGroupId = consumerGroupId, Topic = _options.TopicName });
 
                 await Task.Delay(backoffMs, stoppingToken);
 
@@ -435,7 +535,43 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
         }
         catch (KafkaException ex)
         {
-            _logger.LogWarning(ex, "Error closing message broker consumer during shutdown");
+            // Log to Elasticsearch even for shutdown errors
+            _logService.Error(
+                ex,
+                "Error closing message broker consumer during shutdown",
+                new { ConsumerGroupId = consumerGroupId });
+        }
+    }
+
+    /// <summary>
+    /// Extracts a preview of the message payload for logging.
+    /// </summary>
+    /// <param name="payload">
+    /// The raw message payload bytes.
+    /// </param>
+    /// <returns>
+    /// A string preview of the payload (truncated to 256 characters).
+    /// </returns>
+    /// <remarks>
+    /// This method creates a safe preview of the message payload for logging purposes,
+    /// truncating at 256 characters to prevent log bloat while preserving enough
+    /// context for debugging deserialization issues.
+    /// </remarks>
+    private static string ExtractPayloadPreview(byte[] payload)
+    {
+        if (payload is null || payload.Length == 0)
+        {
+            return "<empty>";
+        }
+
+        try
+        {
+            var preview = System.Text.Encoding.UTF8.GetString(payload);
+            return preview.Length > 256 ? preview.Substring(0, 256) + "..." : preview;
+        }
+        catch
+        {
+            return $"<binary data, {payload.Length} bytes>";
         }
     }
 
