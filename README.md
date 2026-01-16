@@ -522,6 +522,7 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 │  - 9042 -> 30042 (ScyllaDB)                                                 │
 │  - 6379 -> 30079 (Redis)                                                    │
 │  - 9200 -> 30020 (Elasticsearch)                                            │
+│  - 5601 -> 30561 (Kibana)                                                   │
 │  - 8081 -> 3080 (AKHQ)                                                      │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -642,7 +643,8 @@ The following infrastructure services must be deployed before ChatApi:
 2. **Redis** - Caching for presence tracking, rate limiting, and pod identity management
 3. **ScyllaDB** - NoSQL database for chat history
 4. **Elasticsearch** - Log aggregation and search
-5. **AKHQ** - Kafka management UI
+5. **Kibana** - Log visualization and analysis
+6. **AKHQ** - Kafka management UI
 
 ##### Kafka Deployment (Redpanda)
 
@@ -1133,6 +1135,259 @@ The Observability module is reserved for:
 - Distributed tracing (OpenTelemetry)
 - Health checks
 - Custom dashboards and alerting rules
+
+### Elasticsearch and Kibana Deployment
+
+Chatify uses Elasticsearch for centralized log aggregation and Kibana for log visualization and analysis. Both services are deployed as Kubernetes manifests in the `chatify` namespace.
+
+#### Deploy Elasticsearch
+
+Elasticsearch is deployed as a StatefulSet with persistent storage for log durability.
+
+**Deploy Elasticsearch:**
+
+```bash
+# Deploy Elasticsearch StatefulSet with services
+kubectl apply -f deploy/k8s/elastic/10-elasticsearch.yaml
+
+# Wait for Elasticsearch to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-elastic -n chatify --timeout=300s
+
+# Verify Elasticsearch is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-elastic
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-elastic
+```
+
+**Elasticsearch Configuration:**
+- **Image**: `docker.elastic.co/elasticsearch/elasticsearch:8.16.1`
+- **Discovery Type**: single-node (development)
+- **Java Heap**: 512MB (configurable via `ES_JAVA_OPTS`)
+- **Security**: Disabled for development (xpack.security.enabled=false)
+- **Storage**: 5Gi persistent volume claim
+- **Port**: 9200 (HTTP API), 9300 (transport), 30020 (via NodePort)
+
+**Test Elasticsearch:**
+
+```bash
+# Via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-elastic-nodeport 9200:9200
+
+# Check cluster health
+curl http://localhost:9200/_cluster/health?pretty
+
+# List indices
+curl http://localhost:9200/_cat/indices?v
+
+# Or access via NodePort (from kind)
+curl http://localhost:9200/_cluster/health?pretty
+```
+
+#### Deploy Kibana
+
+Kibana provides a web UI for exploring and visualizing logs stored in Elasticsearch.
+
+**Deploy Kibana:**
+
+```bash
+# Deploy Kibana Deployment with services
+kubectl apply -f deploy/k8s/elastic/20-kibana.yaml
+
+# Wait for Kibana to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-kibana -n chatify --timeout=300s
+
+# Verify Kibana is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-kibana
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-kibana
+```
+
+**Kibana Configuration:**
+- **Image**: `docker.elastic.co/kibana/kibana:8.16.1`
+- **Elasticsearch Host**: `http://chatify-elastic:9200`
+- **Security**: Disabled for development
+- **Port**: 5601 (HTTP), 30561 (via NodePort)
+
+#### Access Kibana
+
+**Port Forward to Local Machine:**
+
+```bash
+# Port forward Kibana to local port 5601
+kubectl port-forward -n chatify svc/chatify-kibana-nodeport 5601:5601
+
+# Or access directly via NodePort (from kind)
+# Port mapping 5601 -> 30561 is configured in deploy/kind/kind-cluster.yaml
+```
+
+**Open Kibana in Browser:**
+
+Navigate to `http://localhost:5601` in your web browser.
+
+#### Kibana Index Pattern Setup
+
+To view Chatify logs in Kibana, you need to create an index pattern that matches the log indices.
+
+**Step 1: Navigate to Stack Management**
+
+1. Open Kibana at `http://localhost:5601`
+2. Click the ** hamburger menu** (three lines) in the top-left corner
+3. Navigate to **Stack Management** (under Kibana section)
+
+**Step 2: Create Index Pattern**
+
+1. In the left sidebar, click **Index Patterns**
+2. Click **Create index pattern**
+3. In the index pattern name field, enter: `logs-chatify-*`
+4. Click **Next step**
+
+**Step 3: Configure Time Field**
+
+1. Select `@timestamp` as the time field
+2. Click **Create index pattern**
+
+**Step 4: Verify Logs**
+
+1. Navigate to **Discover** (click the magnifying glass icon in the left sidebar)
+2. Ensure `logs-chatify-*` is selected in the dropdown at the top
+3. Select a time range (e.g., Last 15 minutes, Last 1 hour)
+4. You should see Chatify logs appearing in real-time
+
+#### Querying Logs in Kibana
+
+**Basic Queries:**
+
+```kql
+# View all error logs
+level: "Error"
+
+# View logs by correlation ID
+correlationId: "abc-123-def-456"
+
+# View logs from a specific pod
+context.OriginPodId: "chatify-chat-api-7d9f4c5b6d-abc12"
+
+# View logs for a specific scope (chat channel/scope)
+context.ScopeId: "general"
+
+# Combine filters
+level: "Error" AND context.ScopeId: "general"
+
+# Search by message content
+message: "Kafka" AND level: "Information"
+```
+
+**Using Kibana Query Language (KQL):**
+
+1. In the **Discover** view, use the search bar at the top
+2. Enter KQL queries to filter logs
+3. Use the **Add filter** button for more complex queries
+
+**Viewing Log Details:**
+
+1. Click on any log entry to expand its details
+2. View the **JSON** tab for the full structured log
+3. Examine the **context** object for application-specific properties
+
+**Common Log Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `@timestamp` | Log entry timestamp |
+| `level` | Log level (Information, Warning, Error) |
+| `message` | Log message |
+| `correlationId` | Distributed tracing correlation ID |
+| `context` | Structured context object with application-specific data |
+| `exception` | Exception details (for error logs) |
+| `MachineName` | Host/pod name |
+| `Application` | Application name (e.g., "Chatify.ChatApi") |
+
+#### Creating Kibana Visualizations and Dashboards
+
+**Create a Visualization:**
+
+1. Navigate to **Visualize Library** (Stack Management > Visualize Library)
+2. Click **Create visualization**
+3. Select a visualization type (e.g., Line, Pie, Data Table)
+4. Select the `logs-chatify-*` index pattern
+5. Configure the visualization:
+   - **Y-axis**: Count of documents
+   - **X-axis**: Terms aggregation on `level.name` (for log level distribution)
+   - **Split series**: Terms on `MachineName.keyword` (for per-pod breakdown)
+6. Save the visualization
+
+**Create a Dashboard:**
+
+1. Navigate to **Dashboard** (click the dashboard icon in the left sidebar)
+2. Click **Create dashboard**
+3. Click **Add from library** to add saved visualizations
+4. Arrange and resize widgets
+5. Save the dashboard
+
+#### Monitoring Elasticsearch Health
+
+**Check Cluster Health:**
+
+```bash
+# Via curl
+curl http://localhost:9200/_cluster/health?pretty
+
+# Via kubectl exec
+kubectl exec -n chatify statefulset/chatify-elastic -- \
+  curl -s http://localhost:9200/_cluster/health?pretty
+```
+
+**Health Status Indicators:**
+- **green**: All shards are assigned (optimal)
+- **yellow**: All shards assigned but replicas are unallocated (acceptable for single-node)
+- **red**: Some shards are unassigned (investigate immediately)
+
+**View Node and Shard Statistics:**
+
+```bash
+curl http://localhost:9200/_cat/nodes?v
+curl http://localhost:9200/_cat/indices?v
+curl http://localhost:9200/_cat/shards?v
+```
+
+**View Log Indices:**
+
+```bash
+# List all logs-chatify-* indices
+curl http://localhost:9200/_cat/indices?v | grep logs-chatify
+
+# View index mapping
+curl http://localhost:9200/logs-chatify-chatapi-2026.01.16/_mapping?pretty
+
+# Search recent logs
+curl http://localhost:9200/logs-chatify-*/_search?pretty&size=10
+```
+
+#### Production Considerations
+
+For production deployments of Elasticsearch and Kibana, consider:
+
+**Elasticsearch:**
+- **Multi-node cluster** with 3+ master-eligible nodes for high availability
+- **Dedicated master nodes** for cluster management
+- **Dedicated data nodes** for data storage and querying
+- **Dedicated coordinating nodes** for query coordination
+- **Proper heap sizing**: 50% of available RAM, max 30GB
+- **Storage**: SSD with sufficient IOPS for write-heavy workloads
+- **Security**: Enable xpack.security, use SSL/TLS for all communication
+- **Backup**: Configure snapshot repositories for regular backups
+- **Index Management**: Configure Index Lifecycle Management (ILM) policies
+- **Resource allocation**: Monitor CPU, memory, and disk usage
+
+**Kibana:**
+- **Multiple replicas** for high availability
+- **Caching**: Configure Kibana caching for improved performance
+- **Security**: Enable authentication and authorization
+- **Network policies**: Restrict access to trusted networks
+- **Resource limits**: Set appropriate CPU and memory limits
+
+**Monitoring:**
+- Use Kibana's **Monitoring** feature to monitor cluster health
+- Set up alerts for cluster health, disk usage, and query performance
+- Monitor shard distribution and rebalancing
 
 ## Appendix
 Placeholders only.
