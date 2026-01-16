@@ -122,13 +122,13 @@ public sealed class ChatEventProcessor : IChatEventProcessor
 
                     return cappedDelay + jitter;
                 },
-                onRetry: (outcome, timespan, retryAttempt, context) =>
+                onRetry: (exception, timespan, retryAttempt, context) =>
                 {
                     context.TryGetValue("MessageId", out var messageIdObj);
                     var messageId = messageIdObj?.ToString() ?? "Unknown";
 
                     _logger.LogWarning(
-                        outcome.Exception,
+                        exception,
                         "Database write failed for message {MessageId}. Retry {RetryAttempt}/{MaxRetries} after {DelayMs}ms",
                         messageId,
                         retryAttempt,

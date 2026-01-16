@@ -66,7 +66,7 @@ public sealed class ConsumerFactory : IConsumerFactory
     /// The consumer configuration. Must not be null.
     /// </param>
     /// <returns>
-    /// A new <see cref="IConsumer{Ignore, byte[]}"/> instance configured with
+    /// A new Kafka consumer instance configured with
     /// error and log handlers.
     /// </returns>
     /// <exception cref="ArgumentNullException">
