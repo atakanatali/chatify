@@ -639,7 +639,7 @@ The ConfigMap `chatify-chat-api-config` contains all infrastructure endpoints:
 The following infrastructure services must be deployed before ChatApi:
 
 1. **Kafka** - Message broker for chat events
-2. **Redis** - Caching for presence and rate limiting
+2. **Redis** - Caching for presence tracking, rate limiting, and pod identity management
 3. **ScyllaDB** - NoSQL database for chat history
 4. **Elasticsearch** - Log aggregation and search
 5. **AKHQ** - Kafka management UI
@@ -775,6 +775,95 @@ echo '{"messageId":"test","scopeType":0,"scopeId":"general","senderId":"test","t
 ```
 
 Note: Port mapping `9092 -> 30092` is configured in `deploy/kind/kind-cluster.yaml`.
+
+##### Redis Deployment
+
+Redis serves as the caching layer for Chatify, providing low-latency data storage for:
+- **Presence Tracking**: Real-time user online/offline status across SignalR connections
+- **Rate Limiting**: Per-user message rate limits to prevent spam and abuse
+- **Pod Identity Management**: Distributed coordination across multiple ChatApi pods
+
+**Deploy Redis:**
+
+```bash
+# Deploy Redis deployment with services
+kubectl apply -f deploy/k8s/redis/10-redis-deployment.yaml
+
+# Wait for Redis to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-redis -n chatify --timeout=120s
+
+# Verify Redis is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-redis
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-redis
+```
+
+**Redis Configuration:**
+- **Image**: `redis:8.0-alpine`
+- **Memory Limit**: 256MB with `allkeys-lru` eviction policy
+- **Persistence**: AOF (Append Only File) with everysec fsync
+- **Port**: 6379 (internal), 30079 (via NodePort)
+- **Service**: `chatify-redis:6379` (ClusterIP), `chatify-redis-nodeport` (NodePort)
+
+**Redis Data Structures:**
+
+Chatify uses Redis for the following data patterns:
+
+```
+# Presence Tracking: Key-Value with TTL
+SET user:{userId}:presence {podId}:{connectionId} EX 300
+
+# Rate Limiting: String with increment
+INCR user:{userId}:ratelimit:60s
+EXPIRE user:{userId}:ratelimit:60s 60
+
+# Pod Identity: Simple key-value
+SET pod:{podName}:identity {metadata} EX 3600
+```
+
+**Testing Redis:**
+
+```bash
+# Connect to Redis from host machine
+redis-cli -h localhost -p 30079
+
+# Or via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-redis-nodeport 6379:30079
+redis-cli -h localhost -p 6379
+
+# Test Redis operations
+redis-cli -h localhost -p 30079
+> PING
+PONG
+> SET test-key "Hello Redis"
+OK
+> GET test-key
+"Hello Redis"
+> KEYS user:*
+1) "user:123:presence"
+2) "user:456:ratelimit:60s"
+```
+
+**Monitoring Redis:**
+
+```bash
+# View Redis logs
+kubectl logs -f -n chatify deployment/chatify-redis
+
+# Check Redis info
+kubectl exec -n chatify deployment/chatify-redis -- redis-cli INFO
+
+# Monitor Redis commands in real-time
+kubectl exec -n chatify deployment/chatify-redis -- redis-cli MONITOR
+```
+
+**Production Considerations:**
+
+For production deployments, consider:
+- **Redis Sentinel** for high availability and automatic failover
+- **Redis Cluster** for horizontal scaling and data sharding
+- **Persistent volumes** instead of emptyDir for data durability
+- **Memory optimization** based on actual usage patterns
+- **Security**: Enable AUTH and TLS for production environments
 
 #### Cleanup
 
