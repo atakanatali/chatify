@@ -1,0 +1,146 @@
+---
+# Placeholder Job for Flink Job Submission
+# This manifest provides a template for submitting Flink jobs to the Chatify Flink cluster.
+# Currently a placeholder - actual Flink jobs can be submitted via CLI or REST API.
+#
+# JOB SUBMISSION STRATEGIES:
+#
+# 1. CLI Submission (Recommended for Development):
+#    kubectl exec -n chatify deployment/chatify-flink-jobmanager -- \
+#      /opt/flink/bin/flink run \
+#      --class com.chatify.flink.ChatEventProcessorJob \
+#      /opt/flink/usrlib/chatify-flink-jobs.jar
+#
+# 2. REST API Submission (Recommended for CI/CD):
+#    # First upload the JAR to JobManager
+#    kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 8081:8081
+#
+#    curl -X POST http://localhost:8081/jars/upload \
+#      -H "Content-Type: multipart/form-data" \
+#      -F "jarfile=@/path/to/chatify-flink-jobs.jar"
+#
+#    # Then run the job using the returned JAR ID
+#    curl -X POST http://localhost:8081/jars/{jar-id}/run \
+#      -H "Content-Type: application/json" \
+#      -d '{"entryClass":"com.chatify.flink.ChatEventProcessorJob","parallelism":2}'
+#
+# 3. Kubernetes Job Submission (Recommended for Production):
+#    Create a Kubernetes Job that submits the Flink job and exits.
+#    The job runs the 'flink run' command against the JobManager.
+#
+# 4. Web UI Submission (For Ad-Hoc Testing):
+#    Access the Flink Web UI at http://localhost:8082
+#    Navigate to "Submit New Job" and upload the JAR file.
+#
+# EXAMPLE FLINK JOB CONFIGURATION:
+#
+# The Flink job would typically:
+# - Consume from Kafka topic: chat-events
+# - Process chat messages (aggregation, filtering, enrichment)
+# - Sink to ScyllaDB, Elasticsearch, or back to Kafka
+#
+# Example Flink Job Structure (Java/Scala):
+# ```java
+# public class ChatEventProcessorJob {
+#     public static void main(String[] args) throws Exception {
+#         // Set up the execution environment
+#         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+#
+#         // Configure checkpointing for exactly-once semantics
+#         env.enableCheckpointing(60000); // 60 second intervals
+#         env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+#         env.getCheckpointConfig().setMinPauseBetweenCheckpoints(30000);
+#         env.getCheckpointConfig().setCheckpointTimeout(600000);
+#         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+#
+#         // Kafka source configuration
+#         Properties kafkaProps = new Properties();
+#         kafkaProps.setProperty("bootstrap.servers", "chatify-kafka:9092");
+#         kafkaProps.setProperty("group.id", "chatify-flink-consumer");
+#
+#         FlinkKafkaConsumer<ChatEventEntity> kafkaSource = new FlinkKafkaConsumer<>(
+#             "chat-events",
+#             new ChatEventDeserializer(),
+#             kafkaProps
+#         );
+#         kafkaSource.setStartFromEarliest();
+#
+#         // Create the data stream
+#         DataStream<ChatEventEntity> chatEvents = env.addSource(kafkaSource);
+#
+#         // Process the stream (example: word count per scope)
+#         DataStream<Tuple3<String, String, Long>> wordCounts = chatEvents
+#             .flatMap(new Tokenizer())
+#             .keyBy(0, 1)
+#             .sum(2);
+#
+#         // Sink to ScyllaDB (or other destination)
+#         wordCounts.addSink(new ScyllaDbSink());
+#
+#         // Execute the job
+#         env.execute("Chatify Chat Event Processor");
+#     }
+# }
+# ```
+#
+---
+# Example Kubernetes Job for submitting a Flink job
+# This job runs once, submits the Flink job to the cluster, and completes.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatify-flink-job-submitter
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-flink-job-submitter
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-flink-job-submitter
+        app.kubernetes.io/component: stream-processor
+        app.kubernetes.io/part-of: chatify
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: flink-job-submitter
+          image: flink:1.20.0-scala_2.12-java11
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Chatify Flink Job Submitter"
+              echo "==========================="
+              echo ""
+              echo "This is a placeholder job for submitting Flink jobs."
+              echo ""
+              echo "To submit a Flink job, replace this command with:"
+              echo "  /opt/flink/bin/flink run -d -m chatify-flink-jobmanager:6123 /path/to/your/job.jar"
+              echo ""
+              echo "Job submission strategies:"
+              echo "1. CLI: kubectl exec -it deployment/chatify-flink-jobmanager -- flink run ..."
+              echo "2. REST API: POST to http://localhost:8082/jars/upload (after port-forward)"
+              echo "3. Web UI: Access at http://localhost:8082 and use 'Submit New Job'"
+              echo ""
+              echo "Flink cluster status:"
+              /opt/flink/bin/flink list -m chatify-flink-jobmanager:6123 || echo "No jobs running yet"
+              echo ""
+              echo "Job submission placeholder complete."
+              exit 0
+          env:
+            - name: JAVA_OPTS
+              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+      backoffLimit: 3
+      activeDeadlineSeconds: 300

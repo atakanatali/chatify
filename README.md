@@ -524,6 +524,7 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 │  - 9200 -> 30020 (Elasticsearch)                                            │
 │  - 5601 -> 30561 (Kibana)                                                   │
 │  - 8081 -> 3080 (AKHQ)                                                      │
+│  - 8082 -> 3081 (Flink Web UI)                                              │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -645,6 +646,7 @@ The following infrastructure services must be deployed before ChatApi:
 4. **Elasticsearch** - Log aggregation and search
 5. **Kibana** - Log visualization and analysis
 6. **AKHQ** - Kafka management UI
+7. **Flink** - Stream processing for advanced analytics and event aggregation
 
 ##### Kafka Deployment (Redpanda)
 
@@ -987,6 +989,274 @@ When modifying the schema in production:
 - Test schema changes in development first
 - Monitor compaction and performance after schema changes
 - Consider using lightweight transactions (LWT) for critical operations
+
+##### Flink Deployment
+
+Apache Flink is a distributed stream processing framework designed for high-performance, low-latency, and scalable real-time data processing. Chatify uses Flink for advanced stream processing operations on chat events, including real-time analytics, aggregations, and complex event processing.
+
+**Deploy Flink:**
+
+```bash
+# Deploy Flink JobManager (cluster coordinator)
+kubectl apply -f deploy/k8s/flink/10-flink-jobmanager.yaml
+
+# Wait for JobManager to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-flink-jobmanager -n chatify --timeout=120s
+
+# Deploy Flink TaskManagers (worker nodes)
+kubectl apply -f deploy/k8s/flink/20-flink-taskmanager.yaml
+
+# Wait for TaskManagers to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-flink-taskmanager -n chatify --timeout=120s
+
+# (Optional) Run the placeholder job submission
+kubectl apply -f deploy/k8s/flink/30-flink-job.yaml
+```
+
+**Flink Configuration:**
+
+| Component | Value | Description |
+|-----------|-------|-------------|
+| **JobManager** | `chatify-flink-jobmanager` | Cluster coordinator and job scheduler |
+| **TaskManagers** | 2 replicas (default) | Worker nodes that execute tasks |
+| **Task Slots** | 3 per TaskManager | Parallel task execution capacity |
+| **State Backend** | RocksDB | Distributed state storage |
+| **Checkpointing** | Enabled | Exactly-once processing guarantees |
+| **Parallelism** | 2 (default) | Default parallel execution |
+| **Web UI** | Port 8081 (internal) | Flink dashboard and job management |
+
+**Flink Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Chatify Flink Cluster                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Flink JobManager                               │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │  │
+│  │  │ Job Scheduling│  │Checkpoint Mgmt│  │   Web UI     │             │  │
+│  │  │   Coordinator │  │  Coordinator  │  │  (Port 8081) │             │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘             │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                              │                                             │
+│                              │ RPC (6123)                                   │
+│                              ▼                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                   TaskManager 1         TaskManager 2                │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Task Slot 1 │ Task Slot 2 │ Task Slot 3 │  (per TaskManager)   │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                       │  │
+│  │  Source: Kafka (chat-events) ──► Process ──► Sink: ScyllaDB/ES      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Access Flink Web UI:**
+
+```bash
+# Port forward to local machine
+kubectl port-forward -n chatify svc/chatify-flink-jobmanager-ui 8082:8081
+
+# Or access via NodePort (from kind)
+# Port mapping 8082 -> 3081 is configured in deploy/kind/kind-cluster.yaml
+```
+
+Open your browser to `http://localhost:8082` to access the Flink Web UI.
+
+**Flink Web UI Features:**
+
+- **Overview**: Cluster health, TaskManager status, available task slots
+- **Running Jobs**: Active streaming jobs with metrics and checkpoints
+- **Completed Jobs**: Historical job execution records
+- **Task Managers**: Resource utilization and slot allocation
+- **Checkpoints**: Checkpoint statistics and failure history
+- **Submit New Job**: Upload JAR files and submit Flink jobs
+
+**Job Submission Strategy:**
+
+Chatify supports multiple job submission strategies for different use cases:
+
+**1. CLI Submission (Recommended for Development)**
+
+Submit jobs directly from the JobManager pod:
+
+```bash
+# Execute Flink CLI from JobManager
+kubectl exec -n chatify deployment/chatify-flink-jobmanager -- /opt/flink/bin/flink run \
+  --class com.chatify.flink.ChatEventProcessorJob \
+  --parallelism 2 \
+  /opt/flink/usrlib/chatify-flink-jobs.jar
+```
+
+**2. REST API Submission (Recommended for CI/CD)**
+
+Use the Flink REST API for automated job submission:
+
+```bash
+# First, port forward to the JobManager
+kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 8081:8081
+
+# Upload the JAR file
+JAR_ID=$(curl -X POST http://localhost:8081/jars/upload \
+  -H "Content-Type: multipart/form-data" \
+  --form "jarfile=@/path/to/chatify-flink-jobs.jar" | \
+  jq -r '.["id"]'")
+
+# Run the job
+curl -X POST "http://localhost:8081/jars/$JAR_ID/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entryClass": "com.chatify.flink.ChatEventProcessorJob",
+    "parallelism": 2,
+    "programArgs": "--env=production"
+  }'
+```
+
+**3. Kubernetes Job Submission (Recommended for Production)**
+
+Create a Kubernetes Job that submits the Flink job and exits:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatify-flink-job-submitter
+  namespace: chatify
+spec:
+  template:
+    spec:
+      containers:
+        - name: flink-submit
+          image: flink:1.20.0-scala_2.12-java11
+          command:
+            - /opt/flink/bin/flink
+            - run
+            - -m
+            - chatify-flink-jobmanager:6123
+            - -d
+            - /opt/flink/usrlib/chatify-flink-jobs.jar
+      restartPolicy: Never
+```
+
+**4. Web UI Submission (For Ad-Hoc Testing)**
+
+Access the Flink Web UI at `http://localhost:8082` and use the "Submit New Job" page to upload JAR files and configure job parameters.
+
+**Example Flink Job for Chatify:**
+
+A typical Flink job for Chatify would:
+
+1. **Consume from Kafka**: Read chat events from the `chat-events` topic
+2. **Process the Stream**: Apply transformations, aggregations, or windowing
+3. **Sink to Storage**: Write results to ScyllaDB, Elasticsearch, or back to Kafka
+
+```java
+// Example: Real-time chat statistics per scope
+DataStream<ChatStats> stats = env
+    .addSource(kafkaSource)                    // Read from chat-events
+    .keyBy(ChatEvent::getScopeId)              // Partition by scope
+    .window(TumblingEventTimeWindows.of(Time.minutes(5)))  // 5-minute windows
+    .aggregate(new MessageCountAggregator())   // Count messages
+    .addSink(scyllaSink);                      // Write to ScyllaDB
+```
+
+**Verifying Flink Deployment:**
+
+**1. Verify Flink is running:**
+
+```bash
+# Check pods
+kubectl get pods -n chatify -l app.kubernetes.io/part-of=chatify,app.kubernetes.io/component=stream-processor
+
+# Check services
+kubectl get svc -n chatify -l app.kubernetes.io/part-of=chatify,app.kubernetes.io/component=stream-processor
+
+# Expected output:
+# NAME                                   TYPE        CLUSTER-IP       PORT(S)
+# chatify-flink-jobmanager               ClusterIP   None             6123/TCP,6124/TCP,6125/TCP,8081/TCP
+# chatify-flink-jobmanager-ui            NodePort    10.96.0.0        8081:3081/TCP
+# chatify-flink-taskmanager              ClusterIP   None             6121/TCP,6122/TCP,6125/TCP,9999/TCP
+```
+
+**2. Check Flink cluster status via Web UI:**
+
+1. Navigate to `http://localhost:8082`
+2. Verify the cluster overview shows:
+   - 1 JobManager running
+   - 2 TaskManagers running
+   - 6 total task slots (3 per TaskManager)
+   - 0 jobs running (initial state)
+
+**3. List running jobs via CLI:**
+
+```bash
+kubectl exec -n chatify deployment/chatify-flink-jobmanager -- \
+  /opt/flink/bin/flink list -m chatify-flink-jobmanager:6123
+```
+
+**4. Check logs:**
+
+```bash
+# JobManager logs
+kubectl logs -f -n chatify deployment/chatify-flink-jobmanager
+
+# TaskManager logs
+kubectl logs -f -n chatify deployment/chatify-flink-taskmanager
+```
+
+**Monitoring Flink:**
+
+**Flink Metrics Endpoints:**
+
+Flink exposes Prometheus metrics for monitoring:
+
+```bash
+# Access Flink metrics
+kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 9999:9999
+curl http://localhost:9999/metrics
+```
+
+**Key Metrics to Monitor:**
+
+- `taskmanager_Status_JVM_CPU.Load` - CPU utilization per TaskManager
+- `taskmanager_Status_JVM_Memory_Heap.Used` - Heap memory usage
+- `numRecordsIn` vs `numRecordsOut` - Throughput per operator
+- `buffers_inPoolUsage` - Network buffer utilization
+- `checkpoint_duration` - Checkpoint completion time
+- `last_checkpoint_alignment_buffered` - Alignment buffer size during checkpoints
+
+**Production Considerations:**
+
+For production deployments of Flink, consider:
+
+**High Availability:**
+- Deploy multiple JobManagers with ZooKeeper or Kubernetes HA
+- Configure savepoints for job state recovery
+- Use persistent volumes for checkpoint and savepoint storage
+
+**Resource Management:**
+- Scale TaskManagers based on workload (use HorizontalPodAutoscaler)
+- Tune task slots based on parallelism requirements
+- Configure appropriate heap and managed memory sizes
+
+**State Management:**
+- Use RocksDB state backend for large state
+- Configure incremental checkpoints for faster recovery
+- Enable unaligned checkpoints for low-latency jobs
+- Set appropriate checkpoint intervals based on tolerance for replay
+
+**Monitoring:**
+- Integrate with Prometheus for metrics collection
+- Set up alerts for checkpoint failures, backpressure, and task failures
+- Monitor lag in Kafka consumption (consumer lag metrics)
+
+**Security:**
+- Enable TLS/SSL for network communication
+- Configure authentication and authorization for the Web UI and REST API
+- Use Kubernetes network policies to restrict pod-to-pod communication
 
 #### Cleanup
 
