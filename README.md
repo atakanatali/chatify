@@ -65,8 +65,9 @@ The HTTP request pipeline is configured in the following order:
 ```
 1. Developer Exception Page (development only)
 2. Global Exception Handling Middleware
+   ├─ Uses ExceptionMappingUtility for consistent ProblemDetails
    ├─ Catches all unhandled exceptions
-   ├─ Logs with correlation ID
+   ├─ Logs with correlation ID to Elasticsearch
    └─ Returns RFC 7807 ProblemDetails
 3. Correlation ID Middleware
    ├─ Extracts X-Correlation-ID header
@@ -79,6 +80,76 @@ The HTTP request pipeline is configured in the following order:
    ├─ Controllers (/api/*)
    └─ SignalR Hubs (/hubs/chat)
 ```
+
+### Global Error Handling
+
+Chatify implements comprehensive global error handling across all layers:
+
+#### HTTP Pipeline (Middleware)
+- **GlobalExceptionHandlingMiddleware** catches all unhandled exceptions from HTTP requests
+- Uses **ExceptionMappingUtility** to map exceptions to RFC 7807 ProblemDetails
+- Logs all errors to Elasticsearch with correlation IDs via **ILogService**
+- Returns consistent error responses with appropriate HTTP status codes
+
+#### Background Services
+Both background services implement two-level exception handling:
+
+1. **Outer Loop (Service Level):** Catches unexpected exceptions, logs to Elasticsearch, and lets Kubernetes restart the service
+2. **Inner Loop (Operation Level):** Handles per-operation errors with exponential backoff retry
+
+**ChatHistoryWriterBackgroundService:**
+```csharp
+// Outer loop - Prevents service termination
+try
+{
+    await ExecuteConsumeLoopAsync(stoppingToken);
+}
+catch (Exception ex)
+{
+    _logService.Error(ex, "Fatal error, will restart", context);
+    throw; // Let Kubernetes restart
+}
+
+// Inner loop - Handles per-operation errors
+while (!stoppingToken.IsCancellationRequested)
+{
+    try
+    {
+        var result = await _processor.ProcessAsync(message, stoppingToken);
+        backoff.Reset(); // Success - reset backoff
+    }
+    catch (Exception ex) when (IsTransientError(ex))
+    {
+        _logService.Error(ex, "Transient error, retrying with backoff", context);
+        await Task.Delay(backoff.NextDelayWithJitter(), stoppingToken);
+    }
+}
+```
+
+**ChatBroadcastBackgroundService:**
+- Similar two-level error handling pattern
+- Deserialization errors log payload preview and continue to next message
+- All Kafka/SignalR exceptions logged to Elasticsearch
+- Exponential backoff prevents overwhelming external services
+
+#### Exception Mapping
+
+**ExceptionMappingUtility** provides centralized exception-to-ProblemDetails mapping:
+
+| Exception Type | HTTP Status | Error Code Pattern |
+|----------------|-------------|-------------------|
+| ArgumentException, ArgumentNullException | 400 | Validation errors |
+| UnauthorizedAccessException | 401 | Authentication/Authorization |
+| KeyNotFoundException | 404 | Resource not found |
+| InvalidOperationException | 409 | State conflicts |
+| TimeoutException | 504 | External timeouts |
+| Other exceptions | 500 | Unexpected errors |
+
+**Logging Guarantees:**
+- No Kafka/Redis/Scylla exception leaks unlogged
+- All background service errors logged to Elasticsearch via ILogService
+- Correlation IDs included in all error logs
+- Structured context includes partition, offset, consumer group, etc.
 
 ## Request Flow
 
@@ -390,7 +461,330 @@ Successfully broadcasted message xxx to scope general
 ```
 
 ## Deployment
-Placeholders only. Future steps will document deployment options for Chatify.
+
+### Prerequisites
+
+- [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) v0.20.0 or later
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) v1.27.0 or later
+- [Docker](https://www.docker.com/) Desktop or Engine
+
+### Local Deployment with kind
+
+Chatify provides Kubernetes manifests optimized for local development using kind. The deployment includes:
+
+- Namespace `chatify`
+- ChatApi deployment with 3 replicas
+- NodePort service for external access
+- ConfigMap with infrastructure endpoints (Kafka, Redis, Scylla, Elasticsearch)
+- Health probes (liveness, readiness, startup)
+- Pod identity injection via `POD_NAME` environment variable
+
+#### Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          kind Cluster: chatify                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Namespace: chatify                              │  │
+│  │                                                                      │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Deployment: chatify-chat-api (replicas: 3)                    │  │
+│  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                     │  │  │
+│  │  │  │  Pod-1   │  │  Pod-2   │  │  Pod-3   │                     │  │  │
+│  │  │  │ POD_NAME │  │ POD_NAME │  │ POD_NAME │                     │  │  │
+│  │  │  │ injected │  │ injected │  │ injected │                     │  │  │
+│  │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘                     │  │  │
+│  │  │       │             │             │                            │  │  │
+│  │  └───────┼─────────────┼─────────────┼────────────────────────────┘  │  │
+│  │          │             │             │                               │  │
+│  │          └─────────────┼─────────────┘                               │  │
+│  │                        ▼                                            │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Service: chatify-chat-api (NodePort: 30080/30443)             │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                      │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  ConfigMap: chatify-chat-api-config                             │  │  │
+│  │  │  - Kafka: chatify-kafka:9092                                    │  │  │
+│  │  │  - Redis: chatify-redis:6379                                    │  │  │
+│  │  │  - Scylla: chatify-scylla:9042                                  │  │  │
+│  │  │  - Elastic: http://chatify-elastic:9200                         │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  Port Mappings (host -> container):                                         │
+│  - 8080 -> 30080 (HTTP)                                                     │
+│  - 8443 -> 30443 (HTTPS)                                                    │
+│  - 9092 -> 30092 (Kafka)                                                    │
+│  - 9042 -> 30042 (ScyllaDB)                                                 │
+│  - 6379 -> 30079 (Redis)                                                    │
+│  - 9200 -> 30020 (Elasticsearch)                                            │
+│  - 8081 -> 3080 (AKHQ)                                                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Quick Start
+
+1. **Create the kind cluster:**
+
+```bash
+kind create cluster --config deploy/kind/kind-cluster.yaml
+```
+
+2. **Apply Kubernetes manifests:**
+
+```bash
+# Create namespace
+kubectl apply -f deploy/k8s/00-namespace.yaml
+
+# Create ConfigMap
+kubectl apply -f deploy/k8s/chat-api/10-configmap.yaml
+
+# Create deployment
+kubectl apply -f deploy/k8s/chat-api/20-deployment.yaml
+
+# Create service
+kubectl apply -f deploy/k8s/chat-api/30-service.yaml
+```
+
+3. **Verify deployment:**
+
+```bash
+# Check pods
+kubectl get pods -n chatify
+
+# Check services
+kubectl get svc -n chatify
+
+# Check logs
+kubectl logs -f deployment/chatify-chat-api -n chatify
+```
+
+4. **Access ChatApi:**
+
+```bash
+# Port forward to local port
+kubectl port-forward -n chatify svc/chatify-chat-api 8080:80
+
+# Or access via NodePort (from kind)
+curl http://localhost:8080/health/live
+```
+
+#### Using Deployment Scripts
+
+The `scripts/` directory provides helper scripts for common operations:
+
+```bash
+# Bootstrap entire environment
+./scripts/up.sh
+
+# Tear down environment
+./scripts/down.sh
+
+# Check deployment status
+./scripts/status.sh
+
+# View logs
+./scripts/logs-chatify.sh
+
+# Port forward services
+./scripts/port-forward.sh
+```
+
+#### Health Endpoints
+
+ChatApi exposes the following health endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/health/live` | Liveness probe - checks if container is alive |
+| `/health/ready` | Readiness probe - checks if container can serve traffic |
+| `/health/startup` | Startup probe - checks if application has started |
+
+#### Pod Identity
+
+Each pod receives its identity via the `POD_NAME` environment variable, which is injected using Kubernetes `fieldRef`:
+
+```yaml
+env:
+  - name: POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+```
+
+This identity is used by `IPodIdentityService` to track message origins across distributed pods.
+
+#### Configuration Reference
+
+The ConfigMap `chatify-chat-api-config` contains all infrastructure endpoints:
+
+| Configuration | Description | Default Value |
+|---------------|-------------|---------------|
+| `CHATIFY__LOGGING__URI` | Elasticsearch endpoint | `http://chatify-elastic:9200` |
+| `CHATIFY__DATABASE__CONTACTPOINTS` | ScyllaDB contact points | `chatify-scylla` |
+| `CHATIFY__DATABASE__PORT` | ScyllaDB port | `9042` |
+| `CHATIFY__DATABASE__KEYSPACE` | ScyllaDB keyspace | `chatify` |
+| `CHATIFY__CACHING__CONNECTIONSTRING` | Redis endpoint | `chatify-redis:6379` |
+| `CHATIFY__MESSAGEBROKER__BOOTSTRAPSERVERS` | Kafka bootstrap servers | `chatify-kafka:9092` |
+| `CHATIFY__MESSAGEBROKER__TOPICNAME` | Kafka topic for chat events | `chat-events` |
+| `CHATIFY__MESSAGEBROKER__PARTITIONS` | Kafka topic partitions | `3` |
+
+#### Infrastructure Services
+
+The following infrastructure services must be deployed before ChatApi:
+
+1. **Kafka** - Message broker for chat events
+2. **Redis** - Caching for presence and rate limiting
+3. **ScyllaDB** - NoSQL database for chat history
+4. **Elasticsearch** - Log aggregation and search
+5. **AKHQ** - Kafka management UI
+
+##### Kafka Deployment (Redpanda)
+
+Chatify uses Redpanda as the Kafka-compatible message broker. Redpanda provides full Kafka protocol compatibility with simplified deployment and management.
+
+**Deploy Kafka:**
+
+```bash
+# Deploy Kafka StatefulSet
+kubectl apply -f deploy/k8s/kafka/10-statefulset.yaml
+
+# Wait for Kafka to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-kafka -n chatify --timeout=120s
+
+# Initialize the chat-events topic
+kubectl apply -f deploy/k8s/kafka/20-topic-init-job.yaml
+
+# Verify topic creation
+kubectl logs -n chatify job/chatify-kafka-topic-init
+```
+
+**Kafka Configuration:**
+- **Topic**: `chat-events`
+- **Partitions**: 3 (configurable via ConfigMap)
+- **Replication Factor**: 1
+- **Bootstrap Servers**: `chatify-kafka:9092` (internal), `localhost:9092` (via NodePort)
+
+##### AKHQ Deployment
+
+AKHQ (formerly KafkaHQ) is a Kafka GUI for managing Apache Kafka, Redpanda, and Zookeeper. It provides a web UI for viewing topics, partitions, consumers, and messages.
+
+**Deploy AKHQ:**
+
+```bash
+kubectl apply -f deploy/k8s/akhq/10-deployment.yaml
+
+# Wait for AKHQ to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-akhq -n chatify --timeout=120s
+```
+
+**Access AKHQ:**
+
+```bash
+# Port forward to local port
+kubectl port-forward -n chatify svc/chatify-akhq-nodeport 8081:8080
+
+# Or access via NodePort (from kind)
+curl http://localhost:8081
+```
+
+Open your browser to `http://localhost:8081` to access the AKHQ UI.
+
+##### Verifying Kafka and AKHQ
+
+**1. Verify Kafka is running:**
+
+```bash
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-kafka
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-kafka
+```
+
+**2. Verify topic creation via AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to the **chatify-kafka** connection
+2. Click on **Topics** in the left sidebar
+3. Verify the `chat-events` topic exists with 3 partitions
+4. Click on the topic to view partition details and consumer groups
+
+**3. Produce a test message via AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. Click the **Produce** button
+3. Enter a key (e.g., `general`) and value (JSON):
+   ```json
+   {
+     "messageId": "123e4567-e89b-12d3-a456-426614174000",
+     "scopeType": 0,
+     "scopeId": "general",
+     "senderId": "test-user",
+     "text": "Hello from AKHQ!",
+     "createdAtUtc": "2026-01-16T10:30:00Z",
+     "originPodId": "akhq-test"
+   }
+   ```
+4. Click **Produce** to send the message
+
+**4. Verify message in AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. Click the **Messages** tab
+3. View the message in partition 0 (or based on key routing)
+4. Expand the message to view full JSON content, key, timestamp, offset, and partition
+
+**5. Monitor consumer groups:**
+
+In the AKHQ UI:
+1. Navigate to **Consumers** in the left sidebar
+2. View active consumer groups:
+   - `chatify-chat-history-writer` - Chat history persistence
+   - `chatify-broadcast-*` - Broadcast consumers for each API pod
+3. Click on a consumer group to view:
+   - Lag (messages pending consumption)
+   - Offset positions per partition
+   - Member assignments
+
+**6. Verify topic partitions:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. View the **Partitions** tab showing:
+   - Partition 0, 1, 2
+   - Replication factor
+   - In-sync replica count
+   - Total messages per partition
+
+##### External Kafka Access
+
+To access Kafka from the host machine for testing:
+
+```bash
+# Via kcat (kafkacat)
+kcat -C -b localhost:9092 -t chat-events -f 'Partition(%p) Offset(%o) Key(%k): %s\n'
+
+# Or produce a test message
+echo '{"messageId":"test","scopeType":0,"scopeId":"general","senderId":"test","text":"Hello","createdAtUtc":"2026-01-16T00:00:00Z","originPodId":"test"}' | \
+  kcat -P -b localhost:9092 -t chat-events -k general
+```
+
+Note: Port mapping `9092 -> 30092` is configured in `deploy/kind/kind-cluster.yaml`.
+
+#### Cleanup
+
+```bash
+# Delete resources
+kubectl delete namespace chatify
+
+# Or delete entire kind cluster
+kind delete cluster --name chatify
+```
 
 ## Observability
 Chatify implements comprehensive observability through structured logging with Serilog and Elasticsearch, enabling centralized log aggregation, powerful search capabilities, and real-time monitoring.

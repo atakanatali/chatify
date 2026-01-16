@@ -3,5 +3,8 @@ kind: Namespace
 metadata:
   name: chatify
   labels:
-    app.kubernetes.io/name: Chatify
-    app.kubernetes.io/part-of: Chatify
+    app.kubernetes.io/name: chatify
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+    app.kubernetes.io/created-by: kind
+    environment: development

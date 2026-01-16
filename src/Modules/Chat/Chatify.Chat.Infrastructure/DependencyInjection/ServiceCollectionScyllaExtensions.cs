@@ -3,8 +3,12 @@ using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Infrastructure.Options;
 using Chatify.Chat.Infrastructure.Services.ChatHistory;
+using Chatify.Chat.Infrastructure.Services.ChatHistory.Cql;
+using Chatify.Chat.Infrastructure.Services.ChatHistory.Mapping;
+using Chatify.Chat.Infrastructure.Services.ChatHistory.Scoping;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Chatify.Chat.Infrastructure.DependencyInjection;
 
@@ -98,46 +102,19 @@ public static class ServiceCollectionScyllaExtensions
     /// <item><see cref="ScyllaOptionsEntity"/> as a configured options object (singleton)</item>
     /// <item><see cref="ISession"/> as a Cassandra/ScyllaDB session (singleton)</item>
     /// <item><see cref="ICluster"/> as a Cassandra/ScyllaDB cluster (singleton)</item>
-    /// <item><see cref="ScyllaChatHistoryRepository"/> implementation of <see cref="IChatHistoryRepository"/> (singleton)</item>
+    /// <item><see cref="IScopeKeySerializer"/> for composite key serialization (singleton)</item>
+    /// <item><see cref="ICqlStatementProvider"/> for prepared statement caching (singleton)</item>
+    /// <item><see cref="IChatEventRowMapper"/> for row-to-DTO mapping (singleton)</item>
+    /// <item><see cref="IChatHistoryRepository"/> for chat history persistence (singleton)</item>
     /// </list>
     /// </para>
     /// <para>
-    /// <b>Options Binding:</b> The method binds configuration from the
-    /// <c>"Chatify:Scylla"</c> section to <see cref="ScyllaOptionsEntity"/> and
-    /// validates all required fields before registration.
-    /// </para>
-    /// <para>
-    /// <b>Validation:</b> The following validations are performed:
+    /// <b>Architecture:</b> The registration follows Clean Architecture principles:
     /// <list type="bullet">
-    /// <item><see cref="ScyllaOptionsEntity.ContactPoints"/> must not be empty</item>
-    /// <item><see cref="ScyllaOptionsEntity.Keyspace"/> must not be empty</item>
-    /// <item>If <see cref="ScyllaOptionsEntity.Username"/> is provided, <see cref="ScyllaOptionsEntity.Password"/> must also be provided</item>
-    /// <item>If <see cref="ScyllaOptionsEntity.Password"/> is provided, <see cref="ScyllaOptionsEntity.Username"/> must also be provided</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Connection Pooling:</b> The Cassandra driver manages connection pooling
-    /// automatically. Each node in the cluster gets a pool of connections based
-    /// on the core connections per host setting. The session is thread-safe
-    /// and can be shared across all requests.
-    /// </para>
-    /// <para>
-    /// <b>Cluster Builder Configuration:</b>
-    /// <list type="bullet">
-    /// <item>Contact points are parsed from the comma-separated list</item>
-    /// <item>Authentication is configured if username/password are provided</item>
-    /// <item>Default load balancing policy is token-aware for efficient routing</item>
-    /// <item>Retry policy defaults to DefaultRetryPolicy for transient failures</item>
-    /// <item>Compression is disabled by default (can be enabled via configuration)</item>
-    /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Service Lifetimes:</b>
-    /// <list type="bullet">
-    /// <item>ScyllaDB options: Singleton (configuration is read-only)</item>
-    /// <item>Cluster: Singleton (shared connection to ScyllaDB cluster)</item>
-    /// <item>Session: Singleton (shared connection pool to the keyspace)</item>
-    /// <item>Repository: Singleton (stateless, uses the shared session)</item>
+    /// <item>Infrastructure components depend on abstractions (interfaces)</item>
+    /// <item>Repository implements the Application layer port</item>
+    /// <item>All dependencies are injected for testability</item>
+    /// <item>Statement provider and mapper are reusable across repositories</item>
     /// </list>
     /// </para>
     /// </remarks>
@@ -184,7 +161,12 @@ public static class ServiceCollectionScyllaExtensions
         var session = cluster.Connect(scyllaOptions.Keyspace);
         services.AddSingleton(session);
 
-        // Register the repository implementation
+        // Register infrastructure services (reusable across repositories)
+        services.AddSingleton<IScopeKeySerializer, ColonScopeKeySerializer>();
+        services.AddSingleton<ICqlStatementProvider, CqlStatementProvider>();
+        services.AddSingleton<IChatEventRowMapper, ChatEventRowMapper>();
+
+        // Register the repository implementation with all dependencies
         services.AddSingleton<IChatHistoryRepository, ChatHistoryRepository>();
 
         return services;
@@ -264,7 +246,7 @@ public static class ServiceCollectionScyllaExtensions
         if (!string.IsNullOrWhiteSpace(options.Username) &&
             !string.IsNullOrWhiteSpace(options.Password))
         {
-            builder.WithPlainTextAuth(
+            builder.WithCredentials(
                 options.Username,
                 options.Password);
         }

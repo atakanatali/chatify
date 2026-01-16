@@ -3,3 +3,32 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: chatify
 nodes:
   - role: control-plane
+    extraPortMappings:
+      # ChatApi NodePort (HTTP)
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      # ChatApi NodePort (HTTPS)
+      - containerPort: 30443
+        hostPort: 8443
+        protocol: TCP
+      # Kafka
+      - containerPort: 30092
+        hostPort: 9092
+        protocol: TCP
+      # ScyllaDB
+      - containerPort: 30042
+        hostPort: 9042
+        protocol: TCP
+      # Redis
+      - containerPort: 30079
+        hostPort: 6379
+        protocol: TCP
+      # Elasticsearch
+      - containerPort: 30020
+        hostPort: 9200
+        protocol: TCP
+      # AKHQ
+      - containerPort: 3080
+        hostPort: 8081
+        protocol: TCP

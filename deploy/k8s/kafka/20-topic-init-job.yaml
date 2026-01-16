@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatify-kafka-topic-init
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-kafka-topic-init
+    app.kubernetes.io/component: initialization
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-kafka-topic-init
+        app.kubernetes.io/component: initialization
+        app.kubernetes.io/part-of: chatify
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: kafka-topic-creator
+          image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+          command:
+            - rpk
+            - topic
+            - create
+            - chat-events
+            - --partitions
+            - "3"
+            - --replication-factor
+            - "1"
+            - --brokers
+            - chatify-kafka:9092
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP

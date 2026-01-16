@@ -91,7 +91,7 @@ public static class ServiceCollectionDatabaseExtensions
     /// <item><see cref="Options.ScyllaOptionsEntity"/> as a configured options object (singleton)</item>
     /// <item>Cassandra <see cref="Cassandra.ISession"/> for database operations (singleton)</item>
     /// <item>Cassandra <see cref="Cassandra.ICluster"/> for cluster management (singleton)</item>
-    /// <item>ChatHistoryRepository implementation of <see cref="Ports.IChatHistoryRepository"/> (singleton)</item>
+    /// <item>ChatHistoryRepository implementation of IChatHistoryRepository (singleton)</item>
     /// </list>
     /// </para>
     /// </remarks>

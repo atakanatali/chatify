@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chatify-chat-api-config
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-chat-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+data:
+  # Elasticsearch Configuration
+  CHATIFY__LOGGING__URI: "http://chatify-elastic:9200"
+  CHATIFY__LOGGING__USERNAME: "elastic"
+  CHATIFY__LOGGING__PASSWORD: "changeme"
+  CHATIFY__LOGGING__INDEXPREFIX: "logs-chatify-chatapi"
+
+  # ScyllaDB Configuration
+  CHATIFY__DATABASE__CONTACTPOINTS: "chatify-scylla"
+  CHATIFY__DATABASE__PORT: "9042"
+  CHATIFY__DATABASE__KEYSPACE: "chatify"
+  CHATIFY__DATABASE__USERNAME: ""
+  CHATIFY__DATABASE__PASSWORD: ""
+
+  # Redis Configuration
+  CHATIFY__CACHING__CONNECTIONSTRING: "chatify-redis:6379"
+  CHATIFY__CACHING__INSTANCENAME: "Chatify"
+
+  # Kafka Configuration
+  CHATIFY__MESSAGEBROKER__BOOTSTRAPSERVERS: "chatify-kafka:9092"
+  CHATIFY__MESSAGEBROKER__TOPICNAME: "chat-events"
+  CHATIFY__MESSAGEBROKER__PARTITIONS: "3"
+  CHATIFY__MESSAGEBROKER__BROADCASTCONSUMERGROUPPREFIX: "chatify-broadcast"
+
+  # Chat History Writer Configuration
+  CHATIFY__CHATHISTORYWRITER__CONSUMERGROUPID: "chatify-chat-history-writer"
+  CHATIFY__CHATHISTORYWRITER__DATABASERETRYMAXATTEMPTS: "5"
+  CHATIFY__CHATHISTORYWRITER__DATABASERETRYBASEDELAYMS: "100"
+  CHATIFY__CHATHISTORYWRITER__DATABASERETRYMAXDELAYMS: "10000"
+
+  # ASP.NET Core Configuration
+  ASPNETCORE_ENVIRONMENT: "Development"
+  ASPNETCORE_URLS: "http://+:80"
