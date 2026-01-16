@@ -531,26 +531,75 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 
 #### Quick Start
 
+The easiest way to get started with Chatify is using the deployment scripts:
+
+```bash
+# Bootstrap entire environment (creates kind cluster and deploys all services)
+./scripts/up.sh
+```
+
+This script will:
+1. Create a kind cluster with proper port mappings
+2. Deploy infrastructure services (Kafka, Redis, Elasticsearch, ScyllaDB, Flink)
+3. Deploy management UIs (AKHQ, Kibana)
+4. Deploy the Chat API application
+5. Wait for all services to be ready
+
+**Access the services:**
+
+Services are accessible via the following ports:
+- Chat API (HTTP):  http://localhost:8080
+- Chat API (HTTPS): https://localhost:8443
+- Kafka:            localhost:9092
+- ScyllaDB:         localhost:9042
+- Redis:            localhost:6379
+- Elasticsearch:    http://localhost:9200
+- AKHQ (Kafka UI):  http://localhost:8081
+- Kibana:           http://localhost:5601
+- Flink Web UI:     http://localhost:8082
+
+**Other useful commands:**
+
+```bash
+# Check deployment status (pods, services, events)
+./scripts/status.sh
+
+# View logs for Chat API
+./scripts/logs-chatify.sh
+
+# Port forward services for local access
+./scripts/port-forward.sh
+
+# Tear down environment and delete kind cluster
+./scripts/down.sh
+```
+
+#### Manual Deployment (Advanced)
+
+If you prefer to deploy components manually:
+
 1. **Create the kind cluster:**
 
 ```bash
 kind create cluster --config deploy/kind/kind-cluster.yaml
 ```
 
-2. **Apply Kubernetes manifests:**
+2. **Apply Kubernetes manifests in order:**
 
 ```bash
-# Create namespace
+# Apply namespace
 kubectl apply -f deploy/k8s/00-namespace.yaml
 
-# Create ConfigMap
-kubectl apply -f deploy/k8s/chat-api/10-configmap.yaml
+# Deploy infrastructure components
+kubectl apply -f deploy/k8s/kafka/
+kubectl apply -f deploy/k8s/redis/
+kubectl apply -f deploy/k8s/elastic/
+kubectl apply -f deploy/k8s/scylla/
+kubectl apply -f deploy/k8s/flink/
+kubectl apply -f deploy/k8s/akhq/
 
-# Create deployment
-kubectl apply -f deploy/k8s/chat-api/20-deployment.yaml
-
-# Create service
-kubectl apply -f deploy/k8s/chat-api/30-service.yaml
+# Deploy Chat API application
+kubectl apply -f deploy/k8s/chat-api/
 ```
 
 3. **Verify deployment:**
@@ -574,27 +623,6 @@ kubectl port-forward -n chatify svc/chatify-chat-api 8080:80
 
 # Or access via NodePort (from kind)
 curl http://localhost:8080/health/live
-```
-
-#### Using Deployment Scripts
-
-The `scripts/` directory provides helper scripts for common operations:
-
-```bash
-# Bootstrap entire environment
-./scripts/up.sh
-
-# Tear down environment
-./scripts/down.sh
-
-# Check deployment status
-./scripts/status.sh
-
-# View logs
-./scripts/logs-chatify.sh
-
-# Port forward services
-./scripts/port-forward.sh
 ```
 
 #### Health Endpoints
