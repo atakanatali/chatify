@@ -865,6 +865,127 @@ For production deployments, consider:
 - **Memory optimization** based on actual usage patterns
 - **Security**: Enable AUTH and TLS for production environments
 
+##### ScyllaDB Deployment
+
+ScyllaDB is a high-performance, distributed NoSQL database compatible with Apache Cassandra. Chatify uses ScyllaDB for persistent chat history storage with excellent write performance and linear scalability.
+
+**Deploy ScyllaDB:**
+
+```bash
+# Deploy ScyllaDB StatefulSet with services
+kubectl apply -f deploy/k8s/scylla/10-scylla-config.yaml
+kubectl apply -f deploy/k8s/scylla/20-scylla-statefulset.yaml
+kubectl apply -f deploy/k8s/scylla/30-scylla-service.yaml
+
+# Wait for ScyllaDB to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-scylla -n chatify --timeout=300s
+
+# Initialize the database schema
+kubectl apply -f deploy/k8s/scylla/40-scylla-schema-init-job.yaml
+
+# Verify schema initialization
+kubectl logs -n chatify job/chatify-scylla-schema-init
+```
+
+**ScyllaDB Configuration:**
+- **Image**: `scylladb/scylla:5.4.0`
+- **Developer Mode**: Enabled for kind/local development
+- **Memory**: 1GB (configurable via resources)
+- **Storage**: 5Gi persistent volume
+- **Port**: 9042 (CQL), 30042 (via NodePort)
+- **Service**: `chatify-scylla:9042` (ClusterIP), `chatify-scylla-nodeport` (NodePort)
+
+**Database Schema:**
+
+The ScyllaDB schema initialization creates the following:
+
+**Keyspace: `chatify`**
+- Replication Strategy: SimpleStrategy with RF=1 (development)
+- Durable writes: Enabled
+
+**Table: `chat_messages`**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `scope_id` | text | Partition key: Composite scope identifier (format: "ScopeType:ScopeId") |
+| `created_at_utc` | timestamp | Clustering key: Message creation timestamp (ASC order) |
+| `message_id` | uuid | Clustering key: Unique message identifier |
+| `sender_id` | text | User/service identifier who sent the message |
+| `text` | text | Message content |
+| `origin_pod_id` | text | Pod that originated the message |
+| `broker_partition` | int | Kafka partition where message was produced |
+| `broker_offset` | bigint | Kafka offset of the message |
+
+**Primary Key Design:**
+- **Partition Key**: `(scope_id)` - Groups all messages in a scope together for efficient queries
+- **Clustering Key**: `(created_at_utc ASC, message_id)` - Time-based ordering with UUID for uniqueness
+
+**Table Options:**
+- `gc_grace_seconds`: 864000 (10 days)
+- `compaction`: SizeTieredCompactionStrategy
+- `compression`: LZ4Compressor
+
+**Testing ScyllaDB:**
+
+```bash
+# Connect to ScyllaDB from host machine
+cqlsh localhost --port 30042
+
+# Or via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-scylla-nodeport 9042:30042
+cqlsh localhost --port 9042
+
+# Query the schema
+DESCRIBE KEYSPACES;
+DESCRIBE KEYSPACE chatify;
+
+# Query chat messages
+SELECT * FROM chatify.chat_messages LIMIT 10;
+
+# Query messages for a specific scope
+SELECT * FROM chatify.chat_messages
+WHERE scope_id = 'Channel:general'
+LIMIT 100;
+```
+
+**Monitoring ScyllaDB:**
+
+```bash
+# View ScyllaDB logs
+kubectl logs -f -n chatify statefulset/chatify-scylla
+
+# Check ScyllaDB status
+kubectl exec -n chatify statefulset/chatify-scylla -- nodetool status
+
+# View table statistics
+kubectl exec -n chatify statefulset/chatify-scylla -- nodetool tablestats chatify
+
+# Monitor compaction
+kubectl exec -n chatify statefulset/chatify-scylla -- nodotpl compactionstats
+```
+
+**Production Considerations:**
+
+For production deployments, consider:
+- **Multi-node cluster** with 3+ replicas for high availability
+- **NetworkTopologyStrategy** with proper data center awareness
+- **Replication factor**: 3 for production critical data
+- **Proper resource allocation**: 8+ CPU cores, 16GB+ memory per node
+- **SSD storage** with sufficient IOPS
+- **Regular backups** using nodetool snapshot
+- **Monitoring** with ScyllaDB Monitoring Stack (Prometheus + Grafana)
+- **Security**: Enable SSL/TLS for client and internode communication
+- **Authentication**: Enable and configure proper auth providers
+
+**Schema Evolution:**
+
+When modifying the schema in production:
+- Use `ALTER TABLE` for non-breaking changes
+- Never drop columns without proper migration
+- Test schema changes in development first
+- Monitor compaction and performance after schema changes
+- Consider using lightweight transactions (LWT) for critical operations
+
 #### Cleanup
 
 ```bash

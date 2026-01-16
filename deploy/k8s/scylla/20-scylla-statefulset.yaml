@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: chatify-scylla
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-scylla
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  serviceName: chatify-scylla
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chatify-scylla
+      app.kubernetes.io/component: database
+      app.kubernetes.io/part-of: chatify
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-scylla
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: chatify
+        app.kubernetes.io/managed-by: kubectl
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9180"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Enable host networking for better performance in kind
+      # For production, this would be configured differently
+      hostNetwork: false
+      containers:
+        - name: scylla
+          image: scylladb/scylla:5.4.0
+          ports:
+            - name: cql
+              containerPort: 9042
+              protocol: TCP
+            - name: cql-ssl
+              containerPort: 9142
+              protocol: TCP
+            - name: thrift
+              containerPort: 9160
+              protocol: TCP
+            - name: jmx
+              containerPort: 7199
+              protocol: TCP
+            - name: prometheus
+              containerPort: 9180
+              protocol: TCP
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SCT_CMD_OPTS
+              value: "--developer-mode 1"
+            - name: SCYLLA_HOME
+              value: /var/lib/scylla
+          command:
+            - /scylladb-entrypoint.sh
+          args:
+            - --smp=1
+            - --memory=1G
+            - --developer-mode=1
+            - --overprovisioned=1
+            - --broadcast-address=$(POD_IP)
+            - --broadcast-rpc-address=$(POD_IP)
+            - --listen-address=0.0.0.0
+            - --rpc-address=0.0.0.0
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    nodetool drain || true
+                    sleep 10
+          resources:
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            exec:
+              command:
+                - /opt/scylladb/scripts/healthcheck.sh
+                - --liveness
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /opt/scylladb/scripts/healthcheck.sh
+                - --readiness
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            exec:
+              command:
+                - /opt/scylladb/scripts/healthcheck.sh
+                - --readiness
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/scylla
+            - name: config
+              mountPath: /etc/scylla
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: chatify-scylla-config
+            items:
+              - key: scylla.yaml
+                path: scylla.yaml
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
