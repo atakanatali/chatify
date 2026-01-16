@@ -461,7 +461,198 @@ Successfully broadcasted message xxx to scope general
 ```
 
 ## Deployment
-Placeholders only. Future steps will document deployment options for Chatify.
+
+### Prerequisites
+
+- [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) v0.20.0 or later
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) v1.27.0 or later
+- [Docker](https://www.docker.com/) Desktop or Engine
+
+### Local Deployment with kind
+
+Chatify provides Kubernetes manifests optimized for local development using kind. The deployment includes:
+
+- Namespace `chatify`
+- ChatApi deployment with 3 replicas
+- NodePort service for external access
+- ConfigMap with infrastructure endpoints (Kafka, Redis, Scylla, Elasticsearch)
+- Health probes (liveness, readiness, startup)
+- Pod identity injection via `POD_NAME` environment variable
+
+#### Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          kind Cluster: chatify                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Namespace: chatify                              │  │
+│  │                                                                      │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Deployment: chatify-chat-api (replicas: 3)                    │  │
+│  │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                     │  │  │
+│  │  │  │  Pod-1   │  │  Pod-2   │  │  Pod-3   │                     │  │  │
+│  │  │  │ POD_NAME │  │ POD_NAME │  │ POD_NAME │                     │  │  │
+│  │  │  │ injected │  │ injected │  │ injected │                     │  │  │
+│  │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘                     │  │  │
+│  │  │       │             │             │                            │  │  │
+│  │  └───────┼─────────────┼─────────────┼────────────────────────────┘  │  │
+│  │          │             │             │                               │  │
+│  │          └─────────────┼─────────────┘                               │  │
+│  │                        ▼                                            │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Service: chatify-chat-api (NodePort: 30080/30443)             │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                      │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │  ConfigMap: chatify-chat-api-config                             │  │  │
+│  │  │  - Kafka: chatify-kafka:9092                                    │  │  │
+│  │  │  - Redis: chatify-redis:6379                                    │  │  │
+│  │  │  - Scylla: chatify-scylla:9042                                  │  │  │
+│  │  │  - Elastic: http://chatify-elastic:9200                         │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  Port Mappings (host -> container):                                         │
+│  - 8080 -> 30080 (HTTP)                                                     │
+│  - 8443 -> 30443 (HTTPS)                                                    │
+│  - 9092 -> 30092 (Kafka)                                                    │
+│  - 9042 -> 30042 (ScyllaDB)                                                 │
+│  - 6379 -> 30079 (Redis)                                                    │
+│  - 9200 -> 30020 (Elasticsearch)                                            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Quick Start
+
+1. **Create the kind cluster:**
+
+```bash
+kind create cluster --config deploy/kind/kind-cluster.yaml
+```
+
+2. **Apply Kubernetes manifests:**
+
+```bash
+# Create namespace
+kubectl apply -f deploy/k8s/00-namespace.yaml
+
+# Create ConfigMap
+kubectl apply -f deploy/k8s/chat-api/10-configmap.yaml
+
+# Create deployment
+kubectl apply -f deploy/k8s/chat-api/20-deployment.yaml
+
+# Create service
+kubectl apply -f deploy/k8s/chat-api/30-service.yaml
+```
+
+3. **Verify deployment:**
+
+```bash
+# Check pods
+kubectl get pods -n chatify
+
+# Check services
+kubectl get svc -n chatify
+
+# Check logs
+kubectl logs -f deployment/chatify-chat-api -n chatify
+```
+
+4. **Access ChatApi:**
+
+```bash
+# Port forward to local port
+kubectl port-forward -n chatify svc/chatify-chat-api 8080:80
+
+# Or access via NodePort (from kind)
+curl http://localhost:8080/health/live
+```
+
+#### Using Deployment Scripts
+
+The `scripts/` directory provides helper scripts for common operations:
+
+```bash
+# Bootstrap entire environment
+./scripts/up.sh
+
+# Tear down environment
+./scripts/down.sh
+
+# Check deployment status
+./scripts/status.sh
+
+# View logs
+./scripts/logs-chatify.sh
+
+# Port forward services
+./scripts/port-forward.sh
+```
+
+#### Health Endpoints
+
+ChatApi exposes the following health endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/health/live` | Liveness probe - checks if container is alive |
+| `/health/ready` | Readiness probe - checks if container can serve traffic |
+| `/health/startup` | Startup probe - checks if application has started |
+
+#### Pod Identity
+
+Each pod receives its identity via the `POD_NAME` environment variable, which is injected using Kubernetes `fieldRef`:
+
+```yaml
+env:
+  - name: POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+```
+
+This identity is used by `IPodIdentityService` to track message origins across distributed pods.
+
+#### Configuration Reference
+
+The ConfigMap `chatify-chat-api-config` contains all infrastructure endpoints:
+
+| Configuration | Description | Default Value |
+|---------------|-------------|---------------|
+| `CHATIFY__LOGGING__URI` | Elasticsearch endpoint | `http://chatify-elastic:9200` |
+| `CHATIFY__DATABASE__CONTACTPOINTS` | ScyllaDB contact points | `chatify-scylla` |
+| `CHATIFY__DATABASE__PORT` | ScyllaDB port | `9042` |
+| `CHATIFY__DATABASE__KEYSPACE` | ScyllaDB keyspace | `chatify` |
+| `CHATIFY__CACHING__CONNECTIONSTRING` | Redis endpoint | `chatify-redis:6379` |
+| `CHATIFY__MESSAGEBROKER__BOOTSTRAPSERVERS` | Kafka bootstrap servers | `chatify-kafka:9092` |
+| `CHATIFY__MESSAGEBROKER__TOPICNAME` | Kafka topic for chat events | `chat-events` |
+| `CHATIFY__MESSAGEBROKER__PARTITIONS` | Kafka topic partitions | `3` |
+
+#### Infrastructure Services
+
+The following infrastructure services must be deployed before ChatApi:
+
+1. **Kafka** - Message broker for chat events
+2. **Redis** - Caching for presence and rate limiting
+3. **ScyllaDB** - NoSQL database for chat history
+4. **Elasticsearch** - Log aggregation and search
+
+These services will be added in future steps with their own Kubernetes manifests.
+
+#### Cleanup
+
+```bash
+# Delete resources
+kubectl delete namespace chatify
+
+# Or delete entire kind cluster
+kind delete cluster --name chatify
+```
 
 ## Observability
 Chatify implements comprehensive observability through structured logging with Serilog and Elasticsearch, enabling centralized log aggregation, powerful search capabilities, and real-time monitoring.
