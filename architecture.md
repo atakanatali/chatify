@@ -9,6 +9,7 @@
 - [Infrastructure](#infrastructure)
 - [Testing Strategy](#testing-strategy)
 - [Operational Considerations](#operational-considerations)
+- [Streaming Analytics (Flink)](#streaming-analytics-flink)
 - [Appendix](#appendix)
 
 ## Overview
@@ -1727,4 +1728,248 @@ Response: X-Correlation-ID: corr_a1b2c3d4-e5f6-7890-abcd-ef1234567890
 | `SendChatMessageCommandHandler` | Application layer | Orchestrate message processing |
 | `IPodIdentityService` | Infrastructure | Provide pod identity |
 | `ICorrelationContextAccessor` | BuildingBlocks | Async-local correlation storage |
+
+---
+
+## Streaming Analytics (Flink)
+
+### Overview
+Chatify includes an Apache Flink streaming job for real-time analytics and rate limiting. The Flink job consumes chat events from Kafka, performs windowed aggregations, and produces derived events to downstream topics.
+
+### Location
+- **Source Code:** `src/Tools/FlinkJobs/`
+- **Main Class:** `com.chatify.flink.processor.ChatEventProcessorJob`
+- **Language:** Java 11
+- **Build:** Maven
+
+### Processing Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Flink Streaming Analytics Pipeline                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  KAFKA SOURCE                                                               │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Topic: chat-events                                            │    │
+│     │  Partitions: 3                                                 │    │
+│     │  Format: JSON (ChatEventDto)                                   │    │
+│     │  Consumer Group: chatify-flink-processor                       │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │              ChatEventProcessorJob (Flink)                          │   │
+│  │  ─────────────────────────────────────────────────────────────────  │   │
+│  │                                                                     │   │
+│  │  1. Assign Timestamps & Watermarks                                 │   │
+│  │     └─ Event time: createdAtUtc                                   │   │
+│  │     └─ Out-of-orderness: 5 seconds                                │   │
+│  │     └─ Idle partitions: 60 seconds                                │   │
+│  │                                                                     │   │
+│  │  2. [FORK] Split processing pipeline                               │   │
+│  │                                                                     │   │
+│  │     ├─ BRANCH A: Analytics Aggregation                             │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Key by: compositeScopeId (scopeType:scopeId)            │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Window: Tumbling, 60 seconds                            │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Aggregate:                                              │   │
+│  │     │   │   ├─ Message count                                       │   │
+│  │     │   │   ├─ Unique user count                                   │   │
+│  │     │   │   ├─ Total character count                              │   │
+│  │     │   │   └─ Average message length                              │   │
+│  │     │   │                                                           │   │
+│  │     │   └─ Output: AnalyticsEventEntity                            │   │
+│  │     │                                                                 │   │
+│  │     └─ BRANCH B: Rate Limit Detection                              │   │
+│  │         │                                                           │   │
+│  │         ├─ Key by: senderId (userId)                               │   │
+│  │         │                                                           │   │
+│  │         ├─ Window: Sliding, 60 seconds (slide every 10s)           │   │
+│  │         │                                                           │   │
+│  │         ├─ Aggregate:                                              │   │
+│  │         │   ├─ Message count per user                             │   │
+│  │         │   └─ Track scopes posted in                             │   │
+│  │         │                                                           │   │
+│  │         ├─ Check thresholds:                                       │   │
+│  │         │   ├─ Flag: 200 messages/window                           │   │
+│  │         │   ├─ Throttle: 100 messages/window                       │   │
+│  │         │   └─ Warning: 80 messages/window                         │   │
+│  │         │                                                           │   │
+│  │         └─ Output: RateLimitEventEntity (when threshold exceeded)  │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  KAFKA SINKS                                                                │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │                                                                  │    │
+│     │  ┌─────────────────────┐    ┌────────────────────────────────┐ │    │
+│     │  │ analytics-events    │    │ rate-limit-events               │ │    │
+│     │  │                     │    │                                 │ │    │
+│     │  │ Partitions: 3       │    │ Partitions: 3                   │ │    │
+│     │  │ Key: scopeId        │    │ Key: userId                     │ │    │
+│     │  │ Value: JSON         │    │ Value: JSON                     │ │    │
+│     │  │                     │    │                                 │ │    │
+│     │  │ Consumers:          │    │ Consumers:                      │ │    │
+│     │  │ - Dashboards        │    │ - Enforcement service           │ │    │
+│     │  │ - Monitoring        │    │ - Alerting                      │ │    │
+│     │  │ - BI Tools          │    │ - ML models                     │ │    │
+│     │  └─────────────────────┘    └────────────────────────────────┘ │    │
+│     │                                                                  │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  Key Characteristics:                                                      │
+│  - Exactly-once processing semantics with checkpointing                    │
+│  - Event-time processing with watermarks for out-of-order events           │
+│  - Parallel processing with configurable parallelism                       │
+│  - Stateful aggregations with fault-tolerant state backend                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Derived Topics
+
+#### analytics-events
+Aggregated statistics about chat activity per scope, produced at regular intervals (e.g., every 60 seconds).
+
+**Schema:** `AnalyticsEventEntity`
+```json
+{
+  "analyticsId": "uuid",
+  "scopeType": "Channel|DirectMessage",
+  "scopeId": "general",
+  "windowStartUtc": "2026-01-15T10:30:00Z",
+  "windowEndUtc": "2026-01-15T10:31:00Z",
+  "windowDurationSeconds": 60,
+  "messageCount": 150,
+  "activeUserCount": 25,
+  "uniqueSenderCount": 25,
+  "totalCharacterCount": 4500,
+  "averageMessageLength": 30.0,
+  "computedAtUtc": "2026-01-15T10:31:05Z",
+  "computeTaskId": "chatify-flink-processor"
+}
+```
+
+**Consumers:**
+- Real-time dashboards (Grafana, Kibana)
+- Monitoring systems (Prometheus)
+- Business intelligence tools
+- Capacity planning services
+
+**Partitioning:** By `scopeId` to ensure all analytics for a scope are ordered.
+
+#### rate-limit-events
+Notifications when users exceed configured rate limits, produced immediately upon detection.
+
+**Schema:** `RateLimitEventEntity`
+```json
+{
+  "rateLimitEventId": "uuid",
+  "eventType": "Warning|Throttle|Flag",
+  "userId": "user-123",
+  "scopeType": "Channel|DirectMessage",
+  "scopeId": "general",
+  "windowStartUtc": "2026-01-15T10:30:00Z",
+  "windowEndUtc": "2026-01-15T10:31:00Z",
+  "windowDurationSeconds": 60,
+  "messageCount": 105,
+  "threshold": 100,
+  "excessCount": 5,
+  "messagesPerSecond": 1.75,
+  "detectedAtUtc": "2026-01-15T10:31:05Z",
+  "detectorTaskId": "chatify-flink-processor",
+  "context": "User exceeded throttle threshold"
+}
+```
+
+**Event Types:**
+- `Warning` (80 messages/window): User is approaching limits, may want to slow down
+- `Throttle` (100 messages/window): User should be temporarily restricted
+- `Flag` (200 messages/window): Potential abuse, requires admin review
+
+**Consumers:**
+- Rate limit enforcement service
+- Alerting systems (PagerDuty, Slack)
+- Abuse detection ML models
+- Admin review queue
+
+**Partitioning:** By `userId` to ensure all rate limit events for a user are ordered.
+
+### Checkpointing & State Management
+
+The Flink job uses checkpointing for exactly-once processing guarantees:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Interval | 60s | Time between checkpoints |
+| Min Pause | 30s | Minimum time between checkpoints |
+| Timeout | 10m | Maximum time for checkpoint completion |
+| Max Concurrent | 1 | Maximum concurrent checkpoints |
+
+**State Backend:** Currently uses JobManager memory (TODO: Configure RocksDB for production).
+
+### Configuration
+
+All configuration is via environment variables:
+
+```bash
+# Kafka Connection
+KAFKA_BOOTSTRAP_SERVERS=chatify-kafka:9092
+KAFKA_CONSUMER_GROUP_ID=chatify-flink-processor
+
+# Topics
+KAFKA_SOURCE_TOPIC=chat-events
+KAFKA_ANALYTICS_TOPIC=analytics-events
+KAFKA_RATE_LIMIT_TOPIC=rate-limit-events
+
+# Checkpointing
+CHECKPOINT_INTERVAL_MS=60000
+CHECKPOINT_MIN_PAUSE_MS=30000
+CHECKPOINT_TIMEOUT_MS=600000
+
+# Analytics
+ANALYTICS_WINDOW_SIZE_SECONDS=60
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_SIZE_SECONDS=60
+RATE_LIMIT_WARNING_THRESHOLD=80
+RATE_LIMIT_THROTTLE_THRESHOLD=100
+RATE_LIMIT_FLAG_THRESHOLD=200
+
+# Job
+JOB_PARALLELISM=2
+```
+
+### Deployment
+
+#### Build
+```bash
+cd src/Tools/FlinkJobs
+mvn clean package
+```
+
+#### Submit to Kubernetes
+See `deploy/k8s/flink/30-flink-job.yaml` for the job submission manifest.
+
+### Integration with Chatify Architecture
+
+The Flink job integrates with the existing Chatify architecture as a downstream consumer:
+
+1. **No Upstream Changes Required:** The job reads from the existing `chat-events` topic
+2. **No Coupling:** The C# layer is unaware of Flink; analytics are purely additive
+3. **Decoupled Consumers:** Analytics and history writers consume independently
+4. **Schema Evolution:** New fields in ChatEventDto are ignored by Flink (forward compatible)
+
+### Future Enhancements
+
+- **External State Backend:** Configure RocksDB with HDFS/S3 checkpoint storage
+- **Dead Letter Queue:** Route failed events to DLQ for analysis
+- **Metrics:** Expose Flink metrics for Prometheus
+- **Dynamic Thresholds:** Update rate limits via config topic
+- **Advanced Analytics:** Word frequency, sentiment, emoji detection
+- **Backfill Mode:** Batch processing for historical data
 

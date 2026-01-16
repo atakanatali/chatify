@@ -1,14 +1,13 @@
 ---
 # Placeholder Job for Flink Job Submission
 # This manifest provides a template for submitting Flink jobs to the Chatify Flink cluster.
-# Currently a placeholder - actual Flink jobs can be submitted via CLI or REST API.
 #
 # JOB SUBMISSION STRATEGIES:
 #
 # 1. CLI Submission (Recommended for Development):
 #    kubectl exec -n chatify deployment/chatify-flink-jobmanager -- \
 #      /opt/flink/bin/flink run \
-#      --class com.chatify.flink.ChatEventProcessorJob \
+#      --class com.chatify.flink.processor.ChatEventProcessorJob \
 #      /opt/flink/usrlib/chatify-flink-jobs.jar
 #
 # 2. REST API Submission (Recommended for CI/CD):
@@ -22,7 +21,7 @@
 #    # Then run the job using the returned JAR ID
 #    curl -X POST http://localhost:8081/jars/{jar-id}/run \
 #      -H "Content-Type: application/json" \
-#      -d '{"entryClass":"com.chatify.flink.ChatEventProcessorJob","parallelism":2}'
+#      -d '{"entryClass":"com.chatify.flink.processor.ChatEventProcessorJob","parallelism":2}'
 #
 # 3. Kubernetes Job Submission (Recommended for Production):
 #    Create a Kubernetes Job that submits the Flink job and exits.
@@ -32,60 +31,37 @@
 #    Access the Flink Web UI at http://localhost:8082
 #    Navigate to "Submit New Job" and upload the JAR file.
 #
-# EXAMPLE FLINK JOB CONFIGURATION:
+# CHATIFY FLINK JOB DETAILS:
 #
-# The Flink job would typically:
-# - Consume from Kafka topic: chat-events
-# - Process chat messages (aggregation, filtering, enrichment)
-# - Sink to ScyllaDB, Elasticsearch, or back to Kafka
+# The Chatify Flink job processes chat events and produces analytics and rate limit events.
 #
-# Example Flink Job Structure (Java/Scala):
-# ```java
-# public class ChatEventProcessorJob {
-#     public static void main(String[] args) throws Exception {
-#         // Set up the execution environment
-#         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+# Source Topic: chat-events
+# Sink Topics: analytics-events, rate-limit-events
 #
-#         // Configure checkpointing for exactly-once semantics
-#         env.enableCheckpointing(60000); // 60 second intervals
-#         env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-#         env.getCheckpointConfig().setMinPauseBetweenCheckpoints(30000);
-#         env.getCheckpointConfig().setCheckpointTimeout(600000);
-#         env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+# Job Class: com.chatify.flink.processor.ChatEventProcessorJob
 #
-#         // Kafka source configuration
-#         Properties kafkaProps = new Properties();
-#         kafkaProps.setProperty("bootstrap.servers", "chatify-kafka:9092");
-#         kafkaProps.setProperty("group.id", "chatify-flink-consumer");
+# Processing:
+# - Reads ChatEventEntity from chat-events topic
+# - Aggregates by scope for analytics (tumbling windows, 60s)
+# - Aggregates by user for rate limiting (sliding windows, 60s)
+# - Writes AnalyticsEventEntity to analytics-events topic
+# - Writes RateLimitEventEntity to rate-limit-events topic
 #
-#         FlinkKafkaConsumer<ChatEventEntity> kafkaSource = new FlinkKafkaConsumer<>(
-#             "chat-events",
-#             new ChatEventDeserializer(),
-#             kafkaProps
-#         );
-#         kafkaSource.setStartFromEarliest();
+# Configuration via Environment Variables:
+# - KAFKA_BOOTSTRAP_SERVERS: Kafka broker addresses (default: chatify-kafka:9092)
+# - KAFKA_CONSUMER_GROUP_ID: Consumer group ID (default: chatify-flink-processor)
+# - ANALYTICS_WINDOW_SIZE_SECONDS: Analytics window size (default: 60)
+# - RATE_LIMIT_WINDOW_SIZE_SECONDS: Rate limit window size (default: 60)
+# - RATE_LIMIT_WARNING_THRESHOLD: Warning threshold (default: 80)
+# - RATE_LIMIT_THROTTLE_THRESHOLD: Throttle threshold (default: 100)
+# - RATE_LIMIT_FLAG_THRESHOLD: Flag threshold (default: 200)
+# - JOB_PARALLELISM: Job parallelism (default: 2)
 #
-#         // Create the data stream
-#         DataStream<ChatEventEntity> chatEvents = env.addSource(kafkaSource);
+# Build Instructions:
+#   cd src/Tools/FlinkJobs
+#   mvn clean package
+#   # Output: target/chatify-flink-jobs-1.0.0.jar
 #
-#         // Process the stream (example: word count per scope)
-#         DataStream<Tuple3<String, String, Long>> wordCounts = chatEvents
-#             .flatMap(new Tokenizer())
-#             .keyBy(0, 1)
-#             .sum(2);
-#
-#         // Sink to ScyllaDB (or other destination)
-#         wordCounts.addSink(new ScyllaDbSink());
-#
-#         // Execute the job
-#         env.execute("Chatify Chat Event Processor");
-#     }
-# }
-# ```
-#
----
-# Example Kubernetes Job for submitting a Flink job
-# This job runs once, submits the Flink job to the cluster, and completes.
 ---
 apiVersion: batch/v1
 kind: Job
@@ -117,24 +93,91 @@ spec:
               echo "Chatify Flink Job Submitter"
               echo "==========================="
               echo ""
-              echo "This is a placeholder job for submitting Flink jobs."
+              echo "This job submits the Chatify Flink streaming job to the Flink cluster."
               echo ""
-              echo "To submit a Flink job, replace this command with:"
-              echo "  /opt/flink/bin/flink run -d -m chatify-flink-jobmanager:6123 /path/to/your/job.jar"
+              echo "Job Details:"
+              echo "  Name: Chatify Chat Event Processor"
+              echo "  Class: com.chatify.flink.processor.ChatEventProcessorJob"
+              echo "  Source: chat-events"
+              echo "  Sinks: analytics-events, rate-limit-events"
               echo ""
-              echo "Job submission strategies:"
-              echo "1. CLI: kubectl exec -it deployment/chatify-flink-jobmanager -- flink run ..."
-              echo "2. REST API: POST to http://localhost:8082/jars/upload (after port-forward)"
-              echo "3. Web UI: Access at http://localhost:8082 and use 'Submit New Job'"
+              echo "Prerequisites:"
+              echo "  1. Build the JAR: cd src/Tools/FlinkJobs && mvn clean package"
+              echo "  2. Upload JAR to JobManager: kubectl cp target/chatify-flink-jobs-1.0.0.jar \\"
+              echo "     deployment/chatify-flink-jobmanager:/opt/flink/usrlib/"
+              echo ""
+              echo "To submit manually, uncomment the flink run command below:"
+              echo ""
+              # UNCOMMENT TO RUN:
+              # /opt/flink/bin/flink run \
+              #   -d \
+              #   -m chatify-flink-jobmanager:6123 \
+              #   -c com.chatify.flink.processor.ChatEventProcessorJob \
+              #   /opt/flink/usrlib/chatify-flink-jobs.jar
+              echo ""
+              echo "Job submission placeholder complete."
+              echo "In production, replace this with the actual flink run command."
               echo ""
               echo "Flink cluster status:"
               /opt/flink/bin/flink list -m chatify-flink-jobmanager:6123 || echo "No jobs running yet"
               echo ""
-              echo "Job submission placeholder complete."
               exit 0
           env:
+            # Kafka Configuration
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "chatify-kafka:9092"
+
+            - name: KAFKA_CONSUMER_GROUP_ID
+              value: "chatify-flink-processor"
+
+            # Topic Names
+            - name: KAFKA_SOURCE_TOPIC
+              value: "chat-events"
+
+            - name: KAFKA_ANALYTICS_TOPIC
+              value: "analytics-events"
+
+            - name: KAFKA_RATE_LIMIT_TOPIC
+              value: "rate-limit-events"
+
+            # Checkpointing Configuration
+            - name: CHECKPOINT_INTERVAL_MS
+              value: "60000"
+
+            - name: CHECKPOINT_MIN_PAUSE_MS
+              value: "30000"
+
+            - name: CHECKPOINT_TIMEOUT_MS
+              value: "600000"
+
+            - name: CHECKPOINT_MAX_CONCURRENT
+              value: "1"
+
+            # Analytics Configuration
+            - name: ANALYTICS_WINDOW_SIZE_SECONDS
+              value: "60"
+
+            # Rate Limiting Configuration
+            - name: RATE_LIMIT_WINDOW_SIZE_SECONDS
+              value: "60"
+
+            - name: RATE_LIMIT_WARNING_THRESHOLD
+              value: "80"
+
+            - name: RATE_LIMIT_THROTTLE_THRESHOLD
+              value: "100"
+
+            - name: RATE_LIMIT_FLAG_THRESHOLD
+              value: "200"
+
+            # Job Configuration
+            - name: JOB_PARALLELISM
+              value: "2"
+
+            # JVM Configuration
             - name: JAVA_OPTS
-              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xmx512m"
+
           resources:
             limits:
               cpu: "500m"
@@ -142,5 +185,6 @@ spec:
             requests:
               cpu: "250m"
               memory: "256Mi"
+
       backoffLimit: 3
       activeDeadlineSeconds: 300
