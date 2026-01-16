@@ -297,6 +297,130 @@ Placeholders only. Future steps will describe local development workflows for Ch
 
 ## Testing
 
+### Test Structure
+
+Chatify has two test projects:
+
+- **Chatify.Chat.UnitTests** - Unit tests for domain logic and application handlers
+- **Chatify.Api.IntegrationTests** - Integration tests for the API using WebApplicationFactory
+
+### Running Unit Tests
+
+Unit tests validate domain policies and command handler behavior without external infrastructure dependencies.
+
+```bash
+# Run all unit tests
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj
+
+# Run with detailed output
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --logger "console;verbosity=detailed"
+
+# Run specific test
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --filter "FullyQualifiedName~ChatDomainPolicyTests"
+
+# Run with code coverage
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --collect:"XPlat Code Coverage"
+```
+
+**Unit Test Coverage:**
+
+- `ChatDomainPolicyTests` - Validates domain policy enforcement for:
+  - Scope ID validation (null, empty, whitespace, length limits)
+  - Message text validation (null, length limits)
+  - Sender ID validation (null, empty, whitespace, length limits)
+  - Origin pod ID validation (null, empty, whitespace, length limits)
+
+- `SendChatMessageCommandHandlerTests` - Validates command handler behavior for:
+  - Successful message send with valid inputs
+  - Domain validation failures
+  - Rate limit exceeded scenarios
+  - Event production failures
+  - Pod identity validation failures
+  - DirectMessage scope handling
+  - Empty text handling
+
+### Running Integration Tests
+
+Integration tests use WebApplicationFactory to spin up the API in memory with the in-memory message broker enabled.
+
+```bash
+# Run all integration tests
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj
+
+# Run with detailed output
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj --logger "console;verbosity=detailed"
+
+# Run specific test
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj --filter "FullyQualifiedName~ChatApiIntegrationTests"
+```
+
+**Integration Test Coverage:**
+
+- Health check endpoint
+- Successful message send with enriched event response
+- Validation failures (empty scope ID, text exceeding max length)
+- Partition ordering (same scope goes to same partition)
+- DirectMessage scope handling
+
+**In-Memory Message Broker:**
+
+Integration tests use the `Chatify:MessageBroker:UseInMemoryBroker=true` configuration flag to bypass Kafka and use the `InMemoryChatEventProducerService`. This provides:
+
+- No external infrastructure requirements for tests
+- Deterministic test behavior
+- Fast test execution
+- Event verification through `GetEventsByPartition()` and `GetAllEvents()` methods
+
+### Running All Tests
+
+```bash
+# Run all tests in the solution
+dotnet test
+
+# Run all tests with detailed output
+dotnet test --logger "console;verbosity=detailed"
+
+# Run all tests with code coverage
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+### Test Configuration
+
+The in-memory message broker is configured via the `Chatify:MessageBroker:UseInMemoryBroker` setting:
+
+```json
+{
+  "Chatify": {
+    "MessageBroker": {
+      "UseInMemoryBroker": true,
+      "BootstrapServers": "localhost:9092",
+      "TopicName": "chat-events",
+      "Partitions": 3,
+      "BroadcastConsumerGroupPrefix": "chatify-broadcast"
+    }
+  }
+}
+```
+
+When `UseInMemoryBroker` is true:
+- `InMemoryChatEventProducerService` is registered instead of `ChatEventProducerService`
+- Kafka-specific configuration (BootstrapServers, TopicName, etc.) is not validated
+- Events are stored in memory for test verification
+
+### Test Best Practices
+
+1. **Use Moq for dependencies** - The unit tests use Moq to mock services like `IChatEventProducerService`, `IRateLimitService`, `IPodIdentityService`, and `IClockService`
+
+2. **Arrange-Act-Assert pattern** - All tests follow the AAA pattern for clarity and maintainability
+
+3. **Test names describe behavior** - Test method names clearly describe what is being tested and the expected outcome
+
+4. **No external dependencies** - Unit tests should never require external infrastructure (Kafka, Redis, ScyllaDB, Elasticsearch)
+
+5. **Deterministic tests** - All tests should be deterministic and produce the same results on every run
+
+6. **Fast execution** - Tests should run quickly to enable rapid development feedback
+
 ### SignalR Hub Testing with wscat
 
 **Note:** `wscat` does not support the SignalR protocol directly. Use SignalR client libraries for proper testing. The examples below use standard WebSocket clients with SignalR-compatible messages.
