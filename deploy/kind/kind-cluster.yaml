@@ -28,3 +28,7 @@ nodes:
       - containerPort: 30020
         hostPort: 9200
         protocol: TCP
+      # AKHQ
+      - containerPort: 3080
+        hostPort: 8081
+        protocol: TCP

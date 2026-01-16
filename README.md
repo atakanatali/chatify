@@ -522,6 +522,7 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 │  - 9042 -> 30042 (ScyllaDB)                                                 │
 │  - 6379 -> 30079 (Redis)                                                    │
 │  - 9200 -> 30020 (Elasticsearch)                                            │
+│  - 8081 -> 3080 (AKHQ)                                                      │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -641,8 +642,139 @@ The following infrastructure services must be deployed before ChatApi:
 2. **Redis** - Caching for presence and rate limiting
 3. **ScyllaDB** - NoSQL database for chat history
 4. **Elasticsearch** - Log aggregation and search
+5. **AKHQ** - Kafka management UI
 
-These services will be added in future steps with their own Kubernetes manifests.
+##### Kafka Deployment (Redpanda)
+
+Chatify uses Redpanda as the Kafka-compatible message broker. Redpanda provides full Kafka protocol compatibility with simplified deployment and management.
+
+**Deploy Kafka:**
+
+```bash
+# Deploy Kafka StatefulSet
+kubectl apply -f deploy/k8s/kafka/10-statefulset.yaml
+
+# Wait for Kafka to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-kafka -n chatify --timeout=120s
+
+# Initialize the chat-events topic
+kubectl apply -f deploy/k8s/kafka/20-topic-init-job.yaml
+
+# Verify topic creation
+kubectl logs -n chatify job/chatify-kafka-topic-init
+```
+
+**Kafka Configuration:**
+- **Topic**: `chat-events`
+- **Partitions**: 3 (configurable via ConfigMap)
+- **Replication Factor**: 1
+- **Bootstrap Servers**: `chatify-kafka:9092` (internal), `localhost:9092` (via NodePort)
+
+##### AKHQ Deployment
+
+AKHQ (formerly KafkaHQ) is a Kafka GUI for managing Apache Kafka, Redpanda, and Zookeeper. It provides a web UI for viewing topics, partitions, consumers, and messages.
+
+**Deploy AKHQ:**
+
+```bash
+kubectl apply -f deploy/k8s/akhq/10-deployment.yaml
+
+# Wait for AKHQ to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-akhq -n chatify --timeout=120s
+```
+
+**Access AKHQ:**
+
+```bash
+# Port forward to local port
+kubectl port-forward -n chatify svc/chatify-akhq-nodeport 8081:8080
+
+# Or access via NodePort (from kind)
+curl http://localhost:8081
+```
+
+Open your browser to `http://localhost:8081` to access the AKHQ UI.
+
+##### Verifying Kafka and AKHQ
+
+**1. Verify Kafka is running:**
+
+```bash
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-kafka
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-kafka
+```
+
+**2. Verify topic creation via AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to the **chatify-kafka** connection
+2. Click on **Topics** in the left sidebar
+3. Verify the `chat-events` topic exists with 3 partitions
+4. Click on the topic to view partition details and consumer groups
+
+**3. Produce a test message via AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. Click the **Produce** button
+3. Enter a key (e.g., `general`) and value (JSON):
+   ```json
+   {
+     "messageId": "123e4567-e89b-12d3-a456-426614174000",
+     "scopeType": 0,
+     "scopeId": "general",
+     "senderId": "test-user",
+     "text": "Hello from AKHQ!",
+     "createdAtUtc": "2026-01-16T10:30:00Z",
+     "originPodId": "akhq-test"
+   }
+   ```
+4. Click **Produce** to send the message
+
+**4. Verify message in AKHQ:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. Click the **Messages** tab
+3. View the message in partition 0 (or based on key routing)
+4. Expand the message to view full JSON content, key, timestamp, offset, and partition
+
+**5. Monitor consumer groups:**
+
+In the AKHQ UI:
+1. Navigate to **Consumers** in the left sidebar
+2. View active consumer groups:
+   - `chatify-chat-history-writer` - Chat history persistence
+   - `chatify-broadcast-*` - Broadcast consumers for each API pod
+3. Click on a consumer group to view:
+   - Lag (messages pending consumption)
+   - Offset positions per partition
+   - Member assignments
+
+**6. Verify topic partitions:**
+
+In the AKHQ UI:
+1. Navigate to **Topics** -> **chat-events**
+2. View the **Partitions** tab showing:
+   - Partition 0, 1, 2
+   - Replication factor
+   - In-sync replica count
+   - Total messages per partition
+
+##### External Kafka Access
+
+To access Kafka from the host machine for testing:
+
+```bash
+# Via kcat (kafkacat)
+kcat -C -b localhost:9092 -t chat-events -f 'Partition(%p) Offset(%o) Key(%k): %s\n'
+
+# Or produce a test message
+echo '{"messageId":"test","scopeType":0,"scopeId":"general","senderId":"test","text":"Hello","createdAtUtc":"2026-01-16T00:00:00Z","originPodId":"test"}' | \
+  kcat -P -b localhost:9092 -t chat-events -k general
+```
+
+Note: Port mapping `9092 -> 30092` is configured in `deploy/kind/kind-cluster.yaml`.
 
 #### Cleanup
 
