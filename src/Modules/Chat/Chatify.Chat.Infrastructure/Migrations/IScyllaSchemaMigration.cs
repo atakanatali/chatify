@@ -35,12 +35,18 @@ namespace Chatify.Chat.Infrastructure.Migrations;
 /// This ensures clear ownership and separation of concerns.
 /// </para>
 /// <para>
+/// <b>Composite Migration Key:</b> Migrations are uniquely identified by the
+/// combination of <see cref="ModuleName"/> and <see cref="MigrationId"/>. This allows
+/// different modules to have migrations with the same migration ID without conflicts.
+/// The migration history table uses a composite primary key: <c>(module_name, migration_id)</c>.
+/// </para>
+/// <para>
 /// <b>Implementation Example:</b>
 /// <code><![CDATA[
 /// public class V001_CreateChatMessagesTable : IScyllaSchemaMigration
 /// {
-///     public string Name => "V001_CreateChatMessagesTable";
-///     public string AppliedBy => "Chatify.Chat.Infrastructure";
+///     public string ModuleName => "Chatify.Chat.Infrastructure";
+///     public string MigrationId => "V001_CreateChatMessagesTable";
 ///
 ///     public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
 ///     {
@@ -71,20 +77,44 @@ namespace Chatify.Chat.Infrastructure.Migrations;
 public interface IScyllaSchemaMigration
 {
     /// <summary>
-    /// Gets the unique name of this migration.
+    /// Gets the identifier of the module or domain that owns this migration.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Required:</b> This name must be unique across all migrations in the system.
+    /// <b>Format:</b> Typically the assembly name or a logical module name.
+    /// Examples: <c>Chatify.Chat.Infrastructure</c>, <c>Chatify.Users.Infrastructure</c>.
+    /// </para>
+    /// <para>
+    /// <b>Purpose:</b> This field helps track which migrations belong to which module
+    /// in a modular monolith architecture. Combined with <see cref="MigrationId"/>,
+    /// it forms the composite primary key in the migration history table.
+    /// </para>
+    /// <para>
+    /// <b>Composite Key:</b> The migration history table uses <c>(module_name, migration_id)</c>
+    /// as the primary key, allowing different modules to have migrations with the same
+    /// migration ID without conflicts.
+    /// </para>
+    /// </remarks>
+    string ModuleName { get; }
+
+    /// <summary>
+    /// Gets the unique identifier of this migration within its module.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Uniqueness Scope:</b> This ID must be unique within <see cref="ModuleName"/>,
+    /// but different modules can have migrations with the same ID without conflicts
+    /// because the migration history table uses a composite primary key.
     /// </para>
     /// <para>
     /// <b>Format:</b> A common pattern is to use a version prefix followed by a
     /// descriptive name: <c>V001_Description</c>, <c>V002_AddIndex</c>, etc.
     /// </para>
     /// <para>
-    /// <b>Uniqueness:</b> This name is stored in the migration history table when
-    /// the migration is applied. The migration service checks this table to skip
-    /// migrations that have already been applied.
+    /// <b>Migration Tracking:</b> The combination of <c>(ModuleName, MigrationId)</c>
+    /// is stored in the migration history table when the migration is applied.
+    /// The migration service checks this table to skip migrations that have already
+    /// been applied.
     /// </para>
     /// <para>
     /// <b>Examples:</b>
@@ -95,22 +125,7 @@ public interface IScyllaSchemaMigration
     /// </list>
     /// </para>
     /// </remarks>
-    string Name { get; }
-
-    /// <summary>
-    /// Gets the identifier of the module or domain that owns this migration.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Format:</b> Typically the assembly name or a logical module name.
-    /// Examples: <c>Chatify.Chat.Infrastructure</c>, <c>Chatify.Users.Infrastructure</c>.
-    /// </para>
-    /// <para>
-    /// <b>Purpose:</b> This field helps track which migrations belong to which module
-    /// in a modular monolith architecture.
-    /// </para>
-    /// </remarks>
-    string AppliedBy { get; }
+    string MigrationId { get; }
 
     /// <summary>
     /// Applies the schema changes to the database.

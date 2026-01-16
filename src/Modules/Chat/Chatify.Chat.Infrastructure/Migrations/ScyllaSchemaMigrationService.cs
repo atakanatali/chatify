@@ -1,4 +1,3 @@
-using System.Reflection;
 using Cassandra;
 using Chatify.BuildingBlocks.DependencyInjection;
 using Chatify.BuildingBlocks.Primitives;
@@ -26,6 +25,12 @@ namespace Chatify.Chat.Infrastructure.Migrations;
 /// <b>Migration Tracking:</b> Applied migrations are tracked in a special table
 /// (similar to <c>__EFMigrationsHistory</c>) to ensure each migration is only applied
 /// once. The tracking table is created automatically if it doesn't exist.
+/// </para>
+/// <para>
+/// <b>Composite Migration Key:</b> Migrations are uniquely identified by the combination
+/// of <see cref="IScyllaSchemaMigration.ModuleName"/> and <see cref="IScyllaSchemaMigration.MigrationId"/>.
+/// This allows different modules to have migrations with the same migration ID without conflicts.
+/// The migration history table uses a composite primary key: <c>(module_name, migration_id)</c>.
 /// </para>
 /// <para>
 /// <b>Startup Behavior:</b> When <see cref="ScyllaSchemaMigrationOptionsEntity.ApplySchemaOnStartup"/>
@@ -120,7 +125,7 @@ public sealed class ScyllaSchemaMigrationService : IScyllaSchemaMigrationService
     /// <item>Ensure migration history table exists</item>
     /// <item>Query for already-applied migrations</item>
     /// <item>Filter migrations to find pending ones</item>
-    /// <item>Sort migrations by name (version order)</item>
+    /// <item>Sort migrations by (ModuleName, MigrationId) for deterministic order</item>
     /// <item>Apply each pending migration</item>
     /// <item>Record each applied migration in history</item>
     /// </list>
@@ -134,9 +139,9 @@ public sealed class ScyllaSchemaMigrationService : IScyllaSchemaMigrationService
     /// </list>
     /// </para>
     /// <para>
-    /// <b>Ordering:</b> Migrations are sorted alphabetically by name to ensure
-    /// version-based ordering (e.g., V001, V002, V003). Use naming conventions
-    /// that ensure correct order (zero-padding is recommended).
+    /// <b>Ordering:</b> Migrations are sorted first by ModuleName, then by MigrationId
+    /// (alphabetically) to ensure deterministic ordering across modules. Use naming
+    /// conventions that ensure correct order (zero-padding is recommended for numeric prefixes).
     /// </para>
     /// <para>
     /// <b>Error Handling:</b>
@@ -158,16 +163,17 @@ public sealed class ScyllaSchemaMigrationService : IScyllaSchemaMigrationService
         _logger.LogInformation("ScyllaSchemaMigrationService: Migration history table verified/created");
 
         // Step 2: Get applied migrations
-        var appliedMigrationNames = await _historyRepository.GetAppliedMigrationNamesAsync(cancellationToken);
-        var appliedSet = new HashSet<string>(appliedMigrationNames, StringComparer.Ordinal);
+        var appliedMigrationKeys = await _historyRepository.GetAppliedMigrationKeysAsync(cancellationToken);
+        var appliedSet = new HashSet<(string ModuleName, string MigrationId)>(appliedMigrationKeys);
         _logger.LogInformation(
             "ScyllaSchemaMigrationService: Found {AppliedCount} previously applied migrations",
             appliedSet.Count);
 
         // Step 3: Filter and sort pending migrations
         var pendingMigrations = _migrations
-            .Where(m => !appliedSet.Contains(m.Name))
-            .OrderBy(m => m.Name, StringComparer.Ordinal)
+            .Where(m => !appliedSet.Contains((m.ModuleName, m.MigrationId)))
+            .OrderBy(m => m.ModuleName, StringComparer.Ordinal)
+            .ThenBy(m => m.MigrationId, StringComparer.Ordinal)
             .ToList();
 
         if (pendingMigrations.Count == 0)
@@ -189,37 +195,39 @@ public sealed class ScyllaSchemaMigrationService : IScyllaSchemaMigrationService
             try
             {
                 _logger.LogInformation(
-                    "ScyllaSchemaMigrationService: Applying migration {MigrationName} from {AppliedBy}",
-                    migration.Name,
-                    migration.AppliedBy);
+                    "ScyllaSchemaMigrationService: Applying migration {ModuleName}.{MigrationId}",
+                    migration.ModuleName,
+                    migration.MigrationId);
 
                 // Apply the migration
                 await migration.ApplyAsync(_session, cancellationToken);
 
                 // Record in history
                 await _historyRepository.RecordMigrationAsync(
-                    migration.Name,
-                    migration.AppliedBy,
+                    migration.ModuleName,
+                    migration.MigrationId,
                     DateTime.UtcNow,
                     cancellationToken);
 
                 appliedCount++;
                 _logger.LogInformation(
-                    "ScyllaSchemaMigrationService: Successfully applied migration {MigrationName}",
-                    migration.Name);
+                    "ScyllaSchemaMigrationService: Successfully applied migration {ModuleName}.{MigrationId}",
+                    migration.ModuleName,
+                    migration.MigrationId);
             }
             catch (Exception ex)
             {
                 failedCount++;
                 _logger.LogError(ex,
-                    "ScyllaSchemaMigrationService: Failed to apply migration {MigrationName}. Error: {ErrorMessage}",
-                    migration.Name,
+                    "ScyllaSchemaMigrationService: Failed to apply migration {ModuleName}.{MigrationId}. Error: {ErrorMessage}",
+                    migration.ModuleName,
+                    migration.MigrationId,
                     ex.Message);
 
                 if (_options.FailFastOnSchemaError)
                 {
                     throw new InvalidOperationException(
-                        $"Schema migration failed: {migration.Name}. Enable logging for details. " +
+                        $"Schema migration failed: {migration.ModuleName}.{migration.MigrationId}. Enable logging for details. " +
                         $"Applied: {appliedCount}, Failed: {failedCount}, Remaining: {pendingMigrations.Count - appliedCount - failedCount}",
                         ex);
                 }
@@ -241,7 +249,12 @@ public sealed class ScyllaSchemaMigrationService : IScyllaSchemaMigrationService
 /// <para>
 /// <b>Purpose:</b> This interface provides operations for tracking which migrations
 /// have been applied to the database. The history is stored in a dedicated table
-/// (similar to <c>__EFMigrationsHistory</c> in EF Core).
+/// (similar to <c>__EFMigrationsHistory</c> in EF Core) with a composite primary key.
+/// </para>
+/// <para>
+/// <b>Composite Key Structure:</b> The migration history table uses a composite primary
+/// key <c>(module_name, migration_id)</c> to allow different modules to have migrations
+/// with the same migration ID without conflicts.
 /// </para>
 /// <para>
 /// <b>Isolation:</b> This interface isolates the history tracking logic from the
@@ -264,29 +277,40 @@ public interface ISchemaMigrationHistoryRepository
     /// <b>Idempotency:</b> This method uses <c>CREATE TABLE IF NOT EXISTS</c>,
     /// making it safe to call multiple times.
     /// </para>
+    /// <para>
+    /// <b>Table Schema:</b> The table has the following structure:
+    /// <code><![CDATA[
+    /// CREATE TABLE IF NOT EXISTS schema_migrations (
+    ///     module_name text,
+    ///     migration_id text,
+    ///     applied_at_utc timestamp,
+    ///     PRIMARY KEY ((module_name, migration_id))
+    /// );
+    /// ]]></code>
+    /// </para>
     /// </remarks>
     Task EnsureTableExistsAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Gets the names of all migrations that have been applied.
+    /// Gets the keys of all migrations that have been applied.
     /// </summary>
     /// <param name="cancellationToken">
     /// A token to monitor for cancellation requests.
     /// </param>
     /// <returns>
     /// A task representing the asynchronous operation. The result contains
-    /// the collection of applied migration names.
+    /// the collection of applied migration keys as tuples of (ModuleName, MigrationId).
     /// </returns>
-    Task<IReadOnlyList<string>> GetAppliedMigrationNamesAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<(string ModuleName, string MigrationId)>> GetAppliedMigrationKeysAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Records a migration as applied in the history table.
     /// </summary>
-    /// <param name="migrationName">
-    /// The unique name of the migration.
+    /// <param name="moduleName">
+    /// The name of the module that owns the migration.
     /// </param>
-    /// <param name="appliedBy">
-    /// The module/assembly that applied the migration.
+    /// <param name="migrationId">
+    /// The unique identifier of the migration within the module.
     /// </param>
     /// <param name="appliedAtUtc">
     /// The timestamp when the migration was applied (UTC).
@@ -298,8 +322,8 @@ public interface ISchemaMigrationHistoryRepository
     /// A task representing the asynchronous operation.
     /// </returns>
     Task RecordMigrationAsync(
-        string migrationName,
-        string appliedBy,
+        string moduleName,
+        string migrationId,
         DateTime appliedAtUtc,
         CancellationToken cancellationToken);
 }
@@ -312,6 +336,18 @@ public interface ISchemaMigrationHistoryRepository
 /// <b>Purpose:</b> This class provides the default implementation for managing
 /// migration history in ScyllaDB. It uses the Cassandra driver to execute CQL
 /// statements against the migration history table.
+/// </para>
+/// <para>
+/// <b>Table Schema:</b> The migration history table uses a composite primary key
+/// to support multiple modules with independent migration sequences:
+/// <code><![CDATA[
+/// CREATE TABLE IF NOT EXISTS schema_migrations (
+///     module_name text,
+///     migration_id text,
+///     applied_at_utc timestamp,
+///     PRIMARY KEY ((module_name, migration_id))
+/// );
+/// ]]></code>
 /// </para>
 /// </remarks>
 public sealed class SchemaMigrationHistoryRepository : ISchemaMigrationHistoryRepository
@@ -347,9 +383,10 @@ public sealed class SchemaMigrationHistoryRepository : ISchemaMigrationHistoryRe
     {
         var cql = $@"
             CREATE TABLE IF NOT EXISTS {_options.SchemaMigrationTableName} (
-                migration_name text PRIMARY KEY,
-                applied_by text,
-                applied_at_utc timestamp
+                module_name text,
+                migration_id text,
+                applied_at_utc timestamp,
+                PRIMARY KEY ((module_name, migration_id))
             );";
 
         var statement = new SimpleStatement(cql);
@@ -357,42 +394,43 @@ public sealed class SchemaMigrationHistoryRepository : ISchemaMigrationHistoryRe
     }
 
     /// <inheritdoc/>
-    public async Task<IReadOnlyList<string>> GetAppliedMigrationNamesAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<(string ModuleName, string MigrationId)>> GetAppliedMigrationKeysAsync(CancellationToken cancellationToken)
     {
-        var cql = $"SELECT migration_name FROM {_options.SchemaMigrationTableName};";
+        var cql = $"SELECT module_name, migration_id FROM {_options.SchemaMigrationTableName};";
         var statement = new SimpleStatement(cql);
 
         var rowSet = await _session.ExecuteAsync(statement);
-        var migrationNames = new List<string>();
+        var migrationKeys = new List<(string ModuleName, string MigrationId)>();
 
         foreach (var row in rowSet)
         {
             if (row != null)
             {
-                var migrationName = row.GetValue<string>("migration_name");
-                if (!string.IsNullOrWhiteSpace(migrationName))
+                var moduleName = row.GetValue<string>("module_name");
+                var migrationId = row.GetValue<string>("migration_id");
+                if (!string.IsNullOrWhiteSpace(moduleName) && !string.IsNullOrWhiteSpace(migrationId))
                 {
-                    migrationNames.Add(migrationName);
+                    migrationKeys.Add((moduleName, migrationId));
                 }
             }
         }
 
-        return migrationNames;
+        return migrationKeys;
     }
 
     /// <inheritdoc/>
     public Task RecordMigrationAsync(
-        string migrationName,
-        string appliedBy,
+        string moduleName,
+        string migrationId,
         DateTime appliedAtUtc,
         CancellationToken cancellationToken)
     {
         var cql = $@"
             INSERT INTO {_options.SchemaMigrationTableName} (
-                migration_name, applied_by, applied_at_utc
+                module_name, migration_id, applied_at_utc
             ) VALUES (?, ?, ?);";
 
-        var statement = new SimpleStatement(cql, migrationName, appliedBy, appliedAtUtc);
+        var statement = new SimpleStatement(cql, moduleName, migrationId, appliedAtUtc);
         return _session.ExecuteAsync(statement);
     }
 }

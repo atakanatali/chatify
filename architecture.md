@@ -896,27 +896,35 @@ if (rateLimitResult.IsFailure)
 Chatify implements a **code-first schema migration system** for ScyllaDB. Migrations are implemented as C# classes that execute CQL statements during application startup, providing compile-time safety and testability.
 
 **Migration Architecture:**
-- Each module owns migrations in `Migrations/{ModuleName}/` within its Infrastructure project
+- Each module owns migrations in `Migrations/` within its Infrastructure project
 - Migrations implement `IScyllaSchemaMigration` interface
-- Applied migrations are tracked in `schema_migrations` table (similar to `__EFMigrationsHistory`)
+- Applied migrations are tracked in `schema_migrations` table with a **composite primary key**
 - Migrations are discovered automatically via assembly scanning
 - Already-applied migrations are skipped based on history table lookup
 
+**Composite Migration Key:**
+Migrations are uniquely identified by the combination of `ModuleName` and `MigrationId`. This allows different modules to have migrations with the same migration ID without conflicts. For example:
+- `Chatify.Chat.Infrastructure` can have migration `V001_CreateChatMessagesTable`
+- `Chatify.Users.Infrastructure` can also have migration `V001_CreateUsersTable`
+
+Both can coexist because the migration history table uses a composite primary key: `(module_name, migration_id)`.
+
 **Migration Flow:**
 1. Application starts
-2. Migration service discovers all `IScyllaSchemaMigration` implementations
-3. Service queries `schema_migrations` table for applied migrations
-4. Pending migrations (not in history) are filtered and sorted alphabetically
-5. Each pending migration is applied in order
-6. Successfully applied migrations are recorded in history table
-7. Application proceeds to handle requests
+2. Migration service ensures `schema_migrations` table exists (creates if needed)
+3. Migration service discovers all `IScyllaSchemaMigration` implementations via DI
+4. Service queries `schema_migrations` table for applied migrations
+5. Pending migrations (not in history) are filtered and sorted by `(ModuleName, MigrationId)`
+6. Each pending migration is applied in order
+7. Successfully applied migrations are recorded in history table with `(module_name, migration_id)` key
+8. Application proceeds to handle requests
 
 **Creating Migrations:**
 ```csharp
 public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
 {
-    public string Name => "V001_CreateChatMessagesTable";
-    public string AppliedBy => "Chatify.Chat.Infrastructure";
+    public string ModuleName => "Chatify.Chat.Infrastructure";
+    public string MigrationId => "V001_CreateChatMessagesTable";
 
     public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
     {
@@ -947,11 +955,34 @@ public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
 **Migration History Table Schema:**
 ```sql
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    migration_name text PRIMARY KEY,
-    applied_by text,
-    applied_at_utc timestamp
+    module_name text,
+    migration_id text,
+    applied_at_utc timestamp,
+    PRIMARY KEY ((module_name, migration_id))
 );
 ```
+
+**How Migration Skipping Works:**
+1. On startup, the migration service queries all rows from `schema_migrations`
+2. Each row represents a previously applied migration with its `(module_name, migration_id)` key
+3. The service builds a set of applied keys: `{("Chatify.Chat.Infrastructure", "V001_..."), ...}`
+4. Discovered migrations are checked against this set using the composite key
+5. Migrations whose `(ModuleName, MigrationId)` is in the applied set are skipped
+6. Only migrations not found in the history table are executed
+
+**Example Migration History Table State:**
+```
+| module_name                      | migration_id                   | applied_at_utc          |
+|----------------------------------|--------------------------------|-------------------------|
+| Chatify.Chat.Infrastructure      | V001_CreateChatMessagesTable   | 2026-01-15 10:00:00Z    |
+| Chatify.Chat.Infrastructure      | V002_CreateSchemaMigrationsTable| 2026-01-15 10:00:01Z    |
+| Chatify.Users.Infrastructure     | V001_CreateUsersTable          | 2026-01-15 10:00:02Z    |
+```
+
+On subsequent startup:
+- `V001_CreateChatMessagesTable` for `Chatify.Chat.Infrastructure` → SKIPPED (already applied)
+- `V001_CreateUsersTable` for `Chatify.Users.Infrastructure` → SKIPPED (already applied)
+- `V003_AddIndexToMessagesTable` for `Chatify.Chat.Infrastructure` → APPLIED (new migration)
 
 **Best Practices:**
 1. Use `IF NOT EXISTS` clauses for idempotency
@@ -959,6 +990,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 3. Name with version prefix: `V001_`, `V002_`, etc.
 4. Test migrations in development before production
 5. Never modify applied migrations - create new ones instead
+6. Use consistent `ModuleName` values (typically the assembly name)
 
 **Keyspace Creation:**
 ```sql
