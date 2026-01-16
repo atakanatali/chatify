@@ -1036,11 +1036,9 @@ kubectl apply -f deploy/k8s/scylla/30-scylla-service.yaml
 # Wait for ScyllaDB to be ready
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-scylla -n chatify --timeout=300s
 
-# Initialize the database schema
-kubectl apply -f deploy/k8s/scylla/40-scylla-schema-init-job.yaml
-
-# Verify schema initialization
-kubectl logs -n chatify job/chatify-scylla-schema-init
+# Note: Database schema is managed via code-first migrations
+# Migrations are applied automatically on application startup
+# See the "Schema Migrations" section below for details
 ```
 
 **ScyllaDB Configuration:**
@@ -1174,6 +1172,14 @@ Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations a
 | `SchemaMigrationTableName` | string | "schema_migrations" | Table name for migration history |
 | `FailFastOnSchemaError` | boolean | true | Stop startup if migration fails |
 
+**Existing Migrations:**
+
+The Chat module includes the following migrations:
+
+| Migration ID | Module | Description | Location |
+|--------------|--------|-------------|----------|
+| `0001_init_chat` | Chat | Creates keyspace and chat_messages table | `src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs` |
+
 **Creating a New Migration:**
 
 1. **Create migration class** in `Migrations/{ModuleName}/`:
@@ -1183,38 +1189,20 @@ Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations a
    namespace Chatify.Chat.Infrastructure.Migrations.Chat;
 
    /// <summary>
-   /// Creates the chat_messages table for storing chat history.
+   /// Example migration for adding a new index.
    /// </summary>
-   public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
+   public sealed class V002_AddMessageIndex : IScyllaSchemaMigration
    {
        /// <inheritdoc/>
-       public string Name => "V001_CreateChatMessagesTable";
+       public string ModuleName => "Chat";
 
        /// <inheritdoc/>
-       public string AppliedBy => "Chatify.Chat.Infrastructure";
+       public string MigrationId => "0002_add_message_index";
 
        /// <inheritdoc/>
        public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
        {
-           var cql = @"
-               CREATE TABLE IF NOT EXISTS chat_messages (
-                   scope_id text,
-                   created_at_utc timestamp,
-                   message_id uuid,
-                   sender_id text,
-                   text text,
-                   origin_pod_id text,
-                   broker_partition int,
-                   broker_offset bigint,
-                   PRIMARY KEY ((scope_id), created_at_utc, message_id)
-               ) WITH CLUSTERING ORDER BY (created_at_utc ASC)
-               AND gc_grace_seconds = 86400
-               AND compaction = {
-                   'class': 'LeveledCompactionStrategy',
-                   'sstable_size_in_mb': 160
-               };
-           ";
-
+           var cql = "CREATE INDEX IF NOT EXISTS ON chatify.chat_messages (sender_id);";
            var statement = new SimpleStatement(cql);
            return session.ExecuteAsync(statement, cancellationToken);
        }
@@ -1222,9 +1210,7 @@ Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations a
        /// <inheritdoc/>
        public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
        {
-           // Note: ScyllaDB doesn't support transactional DDL rollback
-           // This is for development/disaster recovery scenarios
-           var cql = "DROP TABLE IF EXISTS chat_messages;";
+           var cql = "DROP INDEX IF EXISTS chatify.chat_messages_sender_id_idx;";
            var statement = new SimpleStatement(cql);
            return session.ExecuteAsync(statement, cancellationToken);
        }
@@ -1237,6 +1223,9 @@ Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations a
    ```
 
 3. **Run the application** - migrations are applied automatically on startup
+
+   Note: The migration service is already registered in `Program.cs`. New migrations
+   implementing `IScyllaSchemaMigration` are automatically discovered via reflection.
 
 **Migration Naming Convention:**
 
@@ -1255,9 +1244,9 @@ cqlsh localhost --port 30042
 SELECT * FROM chatify.schema_migrations;
 
 # Expected output:
-# migration_name                | applied_by                       | applied_at_utc
-#-------------------------------+----------------------------------+--------------------------
-# V001_CreateChatMessagesTable  | Chatify.Chat.Infrastructure     | 2026-01-16 10:30:00.000Z
+# module_name | migration_id     | applied_at_utc
+#-------------+------------------+--------------------------
+# Chat        | 0001_init_chat   | 2026-01-16 10:30:00.000Z
 ```
 
 **Best Practices:**

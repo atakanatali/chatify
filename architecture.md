@@ -904,8 +904,8 @@ Chatify implements a **code-first schema migration system** for ScyllaDB. Migrat
 
 **Composite Migration Key:**
 Migrations are uniquely identified by the combination of `ModuleName` and `MigrationId`. This allows different modules to have migrations with the same migration ID without conflicts. For example:
-- `Chatify.Chat.Infrastructure` can have migration `V001_CreateChatMessagesTable`
-- `Chatify.Users.Infrastructure` can also have migration `V001_CreateUsersTable`
+- `Chat` module can have migration `0001_init_chat`
+- `Users` module can also have migration `0001_init_users`
 
 Both can coexist because the migration history table uses a composite primary key: `(module_name, migration_id)`.
 
@@ -919,34 +919,43 @@ Both can coexist because the migration history table uses a composite primary ke
 7. Successfully applied migrations are recorded in history table with `(module_name, migration_id)` key
 8. Application proceeds to handle requests
 
-**Creating Migrations:**
+**Existing Chat Module Migration:**
+
+The Chat module includes an initial migration that creates the keyspace and chat_messages table:
+
 ```csharp
-public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
+public sealed class InitChatMigration : IScyllaSchemaMigration
 {
-    public string ModuleName => "Chatify.Chat.Infrastructure";
-    public string MigrationId => "V001_CreateChatMessagesTable";
+    public string ModuleName => "Chat";
+    public string MigrationId => "0001_init_chat";
 
     public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
     {
-        var cql = @"
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                scope_id text,
-                created_at_utc timestamp,
-                message_id uuid,
-                sender_id text,
-                text text,
-                origin_pod_id text,
-                broker_partition int,
-                broker_offset bigint,
-                PRIMARY KEY ((scope_id), created_at_utc, message_id)
-            ) WITH CLUSTERING ORDER BY (created_at_utc ASC);
-        ";
+        // Creates keyspace and chat_messages table
+        // See: src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs
+    }
+}
+```
+
+**Creating Additional Migrations:**
+
+To add new migrations to the Chat module:
+
+```csharp
+public sealed class V0002_AddMessageIndex : IScyllaSchemaMigration
+{
+    public string ModuleName => "Chat";
+    public string MigrationId => "0002_add_message_index";
+
+    public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+    {
+        var cql = "CREATE INDEX IF NOT EXISTS ON chatify.chat_messages (sender_id);";
         return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
     }
 
     public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
     {
-        var cql = "DROP TABLE IF EXISTS chat_messages;";
+        var cql = "DROP INDEX IF EXISTS chatify.chat_messages_sender_id_idx;";
         return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
     }
 }
@@ -965,7 +974,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 **How Migration Skipping Works:**
 1. On startup, the migration service queries all rows from `schema_migrations`
 2. Each row represents a previously applied migration with its `(module_name, migration_id)` key
-3. The service builds a set of applied keys: `{("Chatify.Chat.Infrastructure", "V001_..."), ...}`
+3. The service builds a set of applied keys: `{("Chat", "0001_init_chat"), ...}`
 4. Discovered migrations are checked against this set using the composite key
 5. Migrations whose `(ModuleName, MigrationId)` is in the applied set are skipped
 6. Only migrations not found in the history table are executed
@@ -974,15 +983,15 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 ```
 | module_name                      | migration_id                   | applied_at_utc          |
 |----------------------------------|--------------------------------|-------------------------|
-| Chatify.Chat.Infrastructure      | V001_CreateChatMessagesTable   | 2026-01-15 10:00:00Z    |
-| Chatify.Chat.Infrastructure      | V002_CreateSchemaMigrationsTable| 2026-01-15 10:00:01Z    |
-| Chatify.Users.Infrastructure     | V001_CreateUsersTable          | 2026-01-15 10:00:02Z    |
+| Chat                             | 0001_init_chat                 | 2026-01-15 10:00:00Z    |
+| Chat                             | 0002_add_message_index         | 2026-01-15 10:00:01Z    |
+| Users                            | 0001_init_users                | 2026-01-15 10:00:02Z    |
 ```
 
 On subsequent startup:
-- `V001_CreateChatMessagesTable` for `Chatify.Chat.Infrastructure` → SKIPPED (already applied)
-- `V001_CreateUsersTable` for `Chatify.Users.Infrastructure` → SKIPPED (already applied)
-- `V003_AddIndexToMessagesTable` for `Chatify.Chat.Infrastructure` → APPLIED (new migration)
+- `0001_init_chat` for `Chat` → SKIPPED (already applied)
+- `0001_init_users` for `Users` → SKIPPED (already applied)
+- `0002_add_message_index` for `Chat` → APPLIED (new migration)
 
 **Best Practices:**
 1. Use `IF NOT EXISTS` clauses for idempotency
