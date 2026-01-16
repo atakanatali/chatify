@@ -6,6 +6,7 @@ using Chatify.BuildingBlocks.Primitives;
 using Chatify.Chat.Application.DependencyInjection;
 using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Infrastructure.DependencyInjection;
+using Chatify.Chat.Infrastructure.Migrations;
 using Chatify.Chat.Infrastructure.Services.PodIdentity;
 using Chatify.Chat.Infrastructure.Services.RateLimit;
 using Microsoft.Extensions.Logging;
@@ -96,7 +97,12 @@ public class Program
             builder.Services.AddCaching(configuration);
             builder.Services.AddChatHistoryWriter(configuration);
 
+            // ScyllaDB Schema Migrations - must be registered after AddDatabase
+            builder.Services.AddScyllaSchemaMigrationsChatify(configuration);
+
             // Background Services - skip in test mode
+            // Schema migrations run first to ensure database schema is ready
+            builder.Services.AddHostedService<ScyllaSchemaMigrationBackgroundService>();
             builder.Services.AddHostedService<ChatBroadcastBackgroundService>();
             builder.Services.AddHostedService<ChatHistoryWriterBackgroundService>();
 

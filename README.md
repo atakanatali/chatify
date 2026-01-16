@@ -1081,6 +1081,194 @@ The ScyllaDB schema initialization creates the following:
 - `compaction`: SizeTieredCompactionStrategy
 - `compression`: LZ4Compressor
 
+**Schema Migrations:**
+
+Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations are implemented as C# classes that execute CQL statements during application startup, similar to how EF Core manages migrations but tailored for ScyllaDB.
+
+**Migration Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ScyllaDB Schema Migration System                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. MIGRATION CLASSES (Code-First)                                          │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Each module owns: Migrations/{ModuleName}/ in Infrastructure    │    │
+│     │                                                                     │    │
+│     │  public class V001_CreateChatMessagesTable : IScyllaSchemaMigration │    │
+│     │  {                                                                   │    │
+│     │      string Name => "V001_CreateChatMessagesTable";                  │    │
+│     │      string AppliedBy => "Chatify.Chat.Infrastructure";             │    │
+│     │                                                                     │    │
+│     │      Task ApplyAsync(ISession session, CancellationToken ct)          │    │
+│     │      {                                                               │    │
+│     │          var cql = "CREATE TABLE IF NOT EXISTS...";                   │    │
+│     │          return session.ExecuteAsync(new SimpleStatement(cql), ct);  │    │
+│     │      }                                                               │    │
+│     │  }                                                                   │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  2. MIGRATION HISTORY TABLE                                                │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Table: schema_migrations (configurable via Scylla options)      │    │
+│     │  Columns:                                                          │    │
+│     │    - migration_name (text, PRIMARY KEY)                            │    │
+│     │    - applied_by (text)                                             │    │
+│     │    - applied_at_utc (timestamp)                                    │    │
+│     │                                                                     │    │
+│     │  Purpose: Track which migrations have been applied                  │    │
+│     │  Similar to: __EFMigrationsHistory in EF Core                      │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  3. MIGRATION SERVICE                                                      │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  ScyllaSchemaMigrationService                                      │    │
+│     │  ────────────────────────────────────────────────────────────  │    │
+│     │  Responsibilities:                                                  │    │
+│     │  - Discover all IScyllaSchemaMigration implementations             │    │
+│     │  - Query schema_migrations table for applied migrations           │    │
+│     │  - Filter pending migrations (not in history table)                │    │
+│     │  - Apply migrations in order (alphabetical by name)                │    │
+│     │  - Record each applied migration in history table                  │    │
+│     │  - Handle errors (fail-fast or continue based on config)           │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  4. STARTUP BEHAVIOR                                                       │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Configuration: Chatify:Scylla:ApplySchemaOnStartup               │    │
+│     │                                                                     │    │
+│     │  When true (default):                                               │    │
+│     │    1. Application starts                                            │    │
+│     │    2. Migration service runs automatically                         │    │
+│     │    3. Pending migrations are applied                                │    │
+│     │    4. Application begins handling requests                         │    │
+│     │                                                                     │    │
+│     │  When false:                                                        │    │
+│     │    - Migrations must be applied manually                            │    │
+│     │    - Useful for production environments with manual control         │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Configuration Keys:**
+
+```json
+{
+  "Chatify": {
+    "Scylla": {
+      "Keyspace": "chatify",
+      "ApplySchemaOnStartup": true,
+      "SchemaMigrationTableName": "schema_migrations",
+      "FailFastOnSchemaError": true
+    }
+  }
+}
+```
+
+| Configuration Key | Type | Default | Description |
+|-------------------|------|---------|-------------|
+| `Keyspace` | string | "chatify" | Target keyspace for migrations |
+| `ApplySchemaOnStartup` | boolean | true | Auto-apply migrations on startup |
+| `SchemaMigrationTableName` | string | "schema_migrations" | Table name for migration history |
+| `FailFastOnSchemaError` | boolean | true | Stop startup if migration fails |
+
+**Creating a New Migration:**
+
+1. **Create migration class** in `Migrations/{ModuleName}/`:
+   ```csharp
+   using Cassandra;
+
+   namespace Chatify.Chat.Infrastructure.Migrations.Chat;
+
+   /// <summary>
+   /// Creates the chat_messages table for storing chat history.
+   /// </summary>
+   public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
+   {
+       /// <inheritdoc/>
+       public string Name => "V001_CreateChatMessagesTable";
+
+       /// <inheritdoc/>
+       public string AppliedBy => "Chatify.Chat.Infrastructure";
+
+       /// <inheritdoc/>
+       public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+       {
+           var cql = @"
+               CREATE TABLE IF NOT EXISTS chat_messages (
+                   scope_id text,
+                   created_at_utc timestamp,
+                   message_id uuid,
+                   sender_id text,
+                   text text,
+                   origin_pod_id text,
+                   broker_partition int,
+                   broker_offset bigint,
+                   PRIMARY KEY ((scope_id), created_at_utc, message_id)
+               ) WITH CLUSTERING ORDER BY (created_at_utc ASC)
+               AND gc_grace_seconds = 86400
+               AND compaction = {
+                   'class': 'LeveledCompactionStrategy',
+                   'sstable_size_in_mb': 160
+               };
+           ";
+
+           var statement = new SimpleStatement(cql);
+           return session.ExecuteAsync(statement, cancellationToken);
+       }
+
+       /// <inheritdoc/>
+       public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
+       {
+           // Note: ScyllaDB doesn't support transactional DDL rollback
+           // This is for development/disaster recovery scenarios
+           var cql = "DROP TABLE IF EXISTS chat_messages;";
+           var statement = new SimpleStatement(cql);
+           return session.ExecuteAsync(statement, cancellationToken);
+       }
+   }
+   ```
+
+2. **Register migration service** in `Program.cs`:
+   ```csharp
+   builder.Services.AddScyllaSchemaMigrationsChatify(builder.Configuration);
+   ```
+
+3. **Run the application** - migrations are applied automatically on startup
+
+**Migration Naming Convention:**
+
+- Use version prefix: `V001_`, `V002_`, `V003_`, etc.
+- Zero-padding ensures correct alphabetical ordering
+- Descriptive name after version: `CreateChatMessagesTable`, `AddUserPresenceTable`
+- Example: `V001_CreateChatMessagesTable`, `V002_AddIndexes`, `V003_CreateMaterializedView`
+
+**Checking Applied Migrations:**
+
+```bash
+# Connect to ScyllaDB
+cqlsh localhost --port 30042
+
+# Query migration history
+SELECT * FROM chatify.schema_migrations;
+
+# Expected output:
+# migration_name                | applied_by                       | applied_at_utc
+#-------------------------------+----------------------------------+--------------------------
+# V001_CreateChatMessagesTable  | Chatify.Chat.Infrastructure     | 2026-01-16 10:30:00.000Z
+```
+
+**Best Practices:**
+
+1. **Use IF NOT EXISTS**: Make migrations idempotent by using `IF NOT EXISTS` clauses
+2. **One change per migration**: Keep migrations focused on a single schema change
+3. **Test locally**: Always test migrations in development before deploying
+4. **Version control**: Migrations are part of the codebase and version controlled
+5. **Never modify applied migrations**: Create new migrations instead
+6. **Use transactions for data**: Use lightweight transactions (LWT) for data consistency
+
 **Testing ScyllaDB:**
 
 ```bash

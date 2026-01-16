@@ -851,15 +851,27 @@ if (rateLimitResult.IsFailure)
 - `Username` - Authentication username (optional)
 - `Password` - Authentication password (optional)
 
-**DI Extension:** `ServiceCollectionScyllaExtensions.AddScyllaChatify(IConfiguration)`
+**Schema Migration Options:** `ScyllaSchemaMigrationOptionsEntity`
+- `Keyspace` - Target keyspace for migrations (default: "chatify")
+- `ApplySchemaOnStartup` - Auto-apply migrations on startup (default: true)
+- `SchemaMigrationTableName` - Table name for migration history (default: "schema_migrations")
+- `FailFastOnSchemaError` - Stop startup if migration fails (default: true)
+
+**DI Extensions:**
+- `ServiceCollectionScyllaExtensions.AddScyllaChatify(IConfiguration)` - Core ScyllaDB services
+- `ServiceCollectionScyllaSchemaMigrationsExtensions.AddScyllaSchemaMigrationsChatify(IConfiguration)` - Schema migration services
 
 **Registered Services:**
 - `ScyllaOptionsEntity` (singleton) - Configuration options
+- `ScyllaSchemaMigrationOptionsEntity` (singleton) - Migration configuration options
 - `ICluster` (singleton) - Cassandra/ScyllaDB cluster connection
 - `ISession` (singleton) - Cassandra/ScyllaDB session to keyspace
 - `ChatHistoryRepository` (singleton) - Implements `IChatHistoryRepository`
+- `ISchemaMigrationHistoryRepository` (singleton) - Migration history tracking
+- `IScyllaSchemaMigrationService` (singleton) - Schema migration orchestration
+- `IScyllaSchemaMigration` implementations (transient) - Discovered migrations
 
-**Implementation Status:** Fully implemented with idempotent writes and pagination support.
+**Implementation Status:** Fully implemented with idempotent writes, pagination support, and code-first schema migrations.
 
 **Configuration Sections:** `Chatify:Scylla` (preferred) or `Chatify:Database` (backward compatibility)
 
@@ -870,11 +882,83 @@ if (rateLimitResult.IsFailure)
       "ContactPoints": "scylla-node1:9042,scylla-node2:9042,scylla-node3:9042",
       "Keyspace": "chatify",
       "Username": "chatify_user",
-      "Password": "secure_password"
+      "Password": "secure_password",
+      "ApplySchemaOnStartup": true,
+      "SchemaMigrationTableName": "schema_migrations",
+      "FailFastOnSchemaError": true
     }
   }
 }
 ```
+
+**Schema Migration System:**
+
+Chatify implements a **code-first schema migration system** for ScyllaDB. Migrations are implemented as C# classes that execute CQL statements during application startup, providing compile-time safety and testability.
+
+**Migration Architecture:**
+- Each module owns migrations in `Migrations/{ModuleName}/` within its Infrastructure project
+- Migrations implement `IScyllaSchemaMigration` interface
+- Applied migrations are tracked in `schema_migrations` table (similar to `__EFMigrationsHistory`)
+- Migrations are discovered automatically via assembly scanning
+- Already-applied migrations are skipped based on history table lookup
+
+**Migration Flow:**
+1. Application starts
+2. Migration service discovers all `IScyllaSchemaMigration` implementations
+3. Service queries `schema_migrations` table for applied migrations
+4. Pending migrations (not in history) are filtered and sorted alphabetically
+5. Each pending migration is applied in order
+6. Successfully applied migrations are recorded in history table
+7. Application proceeds to handle requests
+
+**Creating Migrations:**
+```csharp
+public sealed class V001_CreateChatMessagesTable : IScyllaSchemaMigration
+{
+    public string Name => "V001_CreateChatMessagesTable";
+    public string AppliedBy => "Chatify.Chat.Infrastructure";
+
+    public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+    {
+        var cql = @"
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                scope_id text,
+                created_at_utc timestamp,
+                message_id uuid,
+                sender_id text,
+                text text,
+                origin_pod_id text,
+                broker_partition int,
+                broker_offset bigint,
+                PRIMARY KEY ((scope_id), created_at_utc, message_id)
+            ) WITH CLUSTERING ORDER BY (created_at_utc ASC);
+        ";
+        return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
+    }
+
+    public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
+    {
+        var cql = "DROP TABLE IF EXISTS chat_messages;";
+        return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
+    }
+}
+```
+
+**Migration History Table Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_name text PRIMARY KEY,
+    applied_by text,
+    applied_at_utc timestamp
+);
+```
+
+**Best Practices:**
+1. Use `IF NOT EXISTS` clauses for idempotency
+2. One schema change per migration
+3. Name with version prefix: `V001_`, `V002_`, etc.
+4. Test migrations in development before production
+5. Never modify applied migrations - create new ones instead
 
 **Keyspace Creation:**
 ```sql
