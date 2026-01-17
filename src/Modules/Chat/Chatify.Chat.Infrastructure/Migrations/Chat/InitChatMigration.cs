@@ -4,8 +4,8 @@ using Chatify.Chat.Infrastructure.Options;
 namespace Chatify.Chat.Infrastructure.Migrations.Chat;
 
 /// <summary>
-/// Initial schema migration for the Chat module that creates the keyspace and
-/// core tables required for chat message persistence.
+/// Initial schema migration for the Chat module that creates the core tables
+/// required for chat message persistence.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,13 +17,19 @@ namespace Chatify.Chat.Infrastructure.Migrations.Chat;
 /// <para>
 /// <b>Purpose:</b> This is the foundational migration for the Chat module that
 /// establishes the database schema required for storing and querying chat messages.
-/// It creates the necessary keyspace and the <c>chat_messages</c> table with an
-/// optimized primary key design for time-series message data.
+/// It creates the <c>chat_messages</c> table with an optimized primary key design
+/// for time-series message data.
+/// </para>
+/// <para>
+/// <b>Keyspace Creation:</b> The keyspace is created automatically by
+/// <c>AddScyllaChatify</c> during application startup (via <c>EnsureKeyspaceExistsAsync</c>),
+/// before this migration runs. This ensures the keyspace exists before migrations
+/// attempt to create tables within it.
 /// </para>
 /// <para>
 /// <b>Schema Design:</b>
 /// <list type="bullet">
-/// <item><b>Keyspace:</b> <c>chatify</c> - SimpleStrategy with replication factor 1 for development</item>
+/// <item><b>Keyspace:</b> <c>chatify</c> - Created by AddScyllaChatify with SimpleStrategy, RF=1 for development</item>
 /// <item><b>Table:</b> <c>chat_messages</c> - Stores chat messages with partitioning by scope_id</item>
 /// <item><b>Partition Key:</b> <c>scope_id</c> - Groups all messages in a conversation scope together</item>
 /// <item><b>Clustering Keys:</b> <c>created_at_utc ASC, message_id</c> - Enables time-based ordering and unique identification</item>
@@ -86,24 +92,16 @@ public sealed class InitChatMigration : IScyllaSchemaMigration
     /// <inheritdoc/>
     /// <remarks>
     /// <para>
-    /// <b>Execution Order:</b>
+    /// <b>Execution:</b>
     /// <list type="number">
-    /// <item>Create keyspace if not exists</item>
     /// <item>Create chat_messages table if not exists</item>
     /// </list>
-    /// </para>
-    /// <para>
-    /// <b>Keyspace Configuration:</b>
-    /// The keyspace is created with SimpleStrategy and replication factor 1,
-/// which is appropriate for development and single-node deployments.
-    /// Production environments should use NetworkTopologyStrategy with higher
-    /// replication factors.
     /// </para>
     /// <para>
     /// <b>Table Schema:</b>
     /// The <c>chat_messages</c> table uses the following schema:
     /// <code><![CDATA[
-    /// CREATE TABLE IF NOT EXISTS chat_messages (
+    /// CREATE TABLE IF NOT EXISTS chatify.chat_messages (
     ///     scope_id text,
     ///     created_at_utc timestamp,
     ///     message_id uuid,
@@ -138,21 +136,7 @@ public sealed class InitChatMigration : IScyllaSchemaMigration
     /// </remarks>
     public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
     {
-        // Step 1: Create keyspace if not exists
-        // Using SimpleStrategy with RF=1 for development/kind deployments
-        var createKeyspaceCql = @"
-            CREATE KEYSPACE IF NOT EXISTS chatify
-            WITH replication = {
-                'class': 'SimpleStrategy',
-                'replication_factor': '1'
-            }
-            AND durable_writes = true;
-        ";
-
-        var createKeyspaceStatement = new SimpleStatement(createKeyspaceCql);
-        var keyspaceTask = session.ExecuteAsync(createKeyspaceStatement);
-
-        // Step 2: Create chat_messages table if not exists
+        // Create chat_messages table if not exists
         var createTableCql = @"
             CREATE TABLE IF NOT EXISTS chatify.chat_messages (
                 scope_id text,
@@ -171,10 +155,7 @@ public sealed class InitChatMigration : IScyllaSchemaMigration
         ";
 
         var createTableStatement = new SimpleStatement(createTableCql);
-        var tableTask = session.ExecuteAsync(createTableStatement);
-
-        // Execute both operations and return a combined task
-        return Task.WhenAll(keyspaceTask, tableTask);
+        return session.ExecuteAsync(createTableStatement);
     }
 
     /// <inheritdoc/>
@@ -188,7 +169,6 @@ public sealed class InitChatMigration : IScyllaSchemaMigration
     /// <b>Rollback Strategy:</b>
     /// <list type="number">
     /// <item>Drop the chat_messages table (WARNING: This deletes all chat message data)</item>
-    /// <item>Optionally drop the keyspace (WARNING: This deletes all data in the keyspace)</item>
     /// </list>
     /// </para>
     /// <para>
@@ -210,16 +190,6 @@ public sealed class InitChatMigration : IScyllaSchemaMigration
         // Drop the table (WARNING: This deletes all data)
         var dropTableCql = "DROP TABLE IF EXISTS chatify.chat_messages;";
         var dropTableStatement = new SimpleStatement(dropTableCql);
-        var dropTableTask = session.ExecuteAsync(dropTableStatement);
-
-        // Optionally drop the keyspace (commented out - use with extreme caution)
-        // var dropKeyspaceCql = "DROP KEYSPACE IF EXISTS chatify;";
-        // var dropKeyspaceStatement = new SimpleStatement(dropKeyspaceCql);
-        // var dropKeyspaceTask = session.ExecuteAsync(dropKeyspaceStatement);
-
-        // Return the table drop task
-        // Uncomment the line below and add dropKeyspaceTask to Task.WhenAll if dropping keyspace
-        return dropTableTask;
-        // return Task.WhenAll(dropTableTask, dropKeyspaceTask);
+        return session.ExecuteAsync(dropTableStatement);
     }
 }

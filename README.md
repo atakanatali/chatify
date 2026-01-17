@@ -1037,7 +1037,8 @@ kubectl apply -f deploy/k8s/scylla/30-scylla-service.yaml
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-scylla -n chatify --timeout=300s
 
 # Note: Database schema is managed via code-first migrations
-# Migrations are applied automatically on application startup
+# Keyspace is created on application startup IF it doesn't exist
+# Tables and other schema objects are created via migrations on startup
 # See the "Schema Migrations" section below for details
 ```
 
@@ -1138,11 +1139,14 @@ Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations a
 │     │                                                                     │    │
 │     │  When true (default):                                               │    │
 │     │    1. Application starts                                            │    │
-│     │    2. Migration service runs automatically                         │    │
-│     │    3. Pending migrations are applied                                │    │
-│     │    4. Application begins handling requests                         │    │
+│     │    2. AddScyllaChatify creates keyspace IF NOT EXISTS               │    │
+│     │    3. AddScyllaChatify connects to keyspace                         │    │
+│     │    4. Migration background service runs                             │    │
+│     │    5. Pending migrations are applied                                │    │
+│     │    6. Application begins handling requests                         │    │
 │     │                                                                     │    │
 │     │  When false:                                                        │    │
+│     │    - Keyspace must exist (connection will fail if missing)          │    │
 │     │    - Migrations must be applied manually                            │    │
 │     │    - Useful for production environments with manual control         │    │
 │     └─────────────────────────────────────────────────────────────────┘    │
@@ -1178,7 +1182,9 @@ The Chat module includes the following migrations:
 
 | Migration ID | Module | Description | Location |
 |--------------|--------|-------------|----------|
-| `0001_init_chat` | Chat | Creates keyspace and chat_messages table | `src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs` |
+| `0001_init_chat` | Chat | Creates chat_messages table (keyspace created by AddScyllaChatify) | `src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs` |
+
+**Note:** The keyspace is created automatically by `AddScyllaChatify` during application startup (via `EnsureKeyspaceExistsAsync`), before migrations run. The `0001_init_chat` migration creates the `chat_messages` table.
 
 **Creating a New Migration:**
 

@@ -87,6 +87,49 @@ public static class GuardUtility
     }
 
     /// <summary>
+    /// Validates that the specified string argument is not <c>null</c>, empty, or consisting only of whitespace characters.
+    /// </summary>
+    /// <param name="value">The string argument value to validate.</param>
+    /// <param name="paramName">The name of the parameter being validated. Automatically populated by the compiler.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="value"/> is <c>null</c>, an empty string (""), or contains only whitespace characters.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Purpose:</b> This method provides strict string validation that rejects not only <c>null</c> and empty strings
+    /// but also strings that contain only whitespace characters (spaces, tabs, newlines, etc.).
+    /// </para>
+    /// <para>
+    /// <b>Use Cases:</b> Use this validation for strings that must contain meaningful content, such as:
+    /// <list type="bullet">
+    /// <item>User names and identifiers</item>
+    /// <item>Database keyspace and table names</item>
+    /// <item>Configuration values that must be non-empty</item>
+    /// <item>URLs and paths</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Whitespace Characters:</b> This method uses <see cref="string.IsNullOrWhiteSpace(string)"/>,
+    /// which considers the following characters as whitespace: spaces, tabs, line feeds, carriage returns,
+    /// form feeds, vertical tabs, and any other Unicode characters categorized as whitespace.
+    /// </para>
+    /// <para>
+    /// <b>Comparison:</b> This method is stricter than <see cref="NotEmpty(string?, string?)"/>, which
+    /// allows whitespace-only strings. Choose the appropriate method based on whether whitespace-only
+    /// strings should be considered valid for your use case.
+    /// </para>
+    /// </remarks>
+    public static void NotNullOrWhiteSpace(
+        [NotNull] string? value,
+        [CallerArgumentExpression(nameof(value))] string? paramName = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException("String value cannot be null, empty, or whitespace.", paramName);
+        }
+    }
+
+    /// <summary>
     /// Validates that the specified collection argument is not <c>null</c> or empty.
     /// </summary>
     /// <typeparam name="T">The type of elements in the collection.</typeparam>

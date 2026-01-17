@@ -93,11 +93,12 @@ public class Program
         if (!isTestMode)
         {
             // Infrastructure Providers - skip in test mode
-            builder.Services.AddDatabase(configuration);
+            // ScyllaDB must be registered first as it provides the database session
+            builder.Services.AddScyllaChatify(configuration);
             builder.Services.AddCaching(configuration);
             builder.Services.AddChatHistoryWriter(configuration);
 
-            // ScyllaDB Schema Migrations - must be registered after AddDatabase
+            // ScyllaDB Schema Migrations - must be registered after AddScyllaChatify
             builder.Services.AddScyllaSchemaMigrationsChatify(configuration);
 
             // Background Services - skip in test mode
