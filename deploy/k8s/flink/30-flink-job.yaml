@@ -186,5 +186,5 @@ spec:
               cpu: "250m"
               memory: "256Mi"
 
-      backoffLimit: 3
-      activeDeadlineSeconds: 300
+  backoffLimit: 3
+  activeDeadlineSeconds: 300

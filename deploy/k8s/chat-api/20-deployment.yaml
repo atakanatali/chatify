@@ -35,7 +35,7 @@ spec:
 
       containers:
         - name: chatify-chat-api
-          image: chatify-chat-api:latest
+          image: chatify-api:latest
           imagePullPolicy: IfNotPresent
 
           ports:
@@ -50,6 +50,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: chatify-chat-api-config
+          env:
+            - name: Elasticsearch__Uri
+              value: "http://chatify-elastic:9200"
+            - name: Serilog__WriteTo__0__Args__nodeUris
+              value: "http://chatify-elastic:9200"
 
           # PodId injection via fieldRef
           env:

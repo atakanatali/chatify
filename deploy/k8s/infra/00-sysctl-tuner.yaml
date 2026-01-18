@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sysctl-tuner
+  namespace: kube-system
+  labels:
+    app: sysctl-tuner
+spec:
+  selector:
+    matchLabels:
+      app: sysctl-tuner
+  template:
+    metadata:
+      labels:
+        app: sysctl-tuner
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      containers:
+      - name: tuner
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          sysctl -w fs.aio-max-nr=1048576
+          echo "Increased fs.aio-max-nr to 1048576"
+          sleep infinity
+        securityContext:
+          privileged: true

@@ -22,17 +22,17 @@ spec:
       containers:
         - name: kafka-topic-creator
           image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
-          command:
+          args:
             - rpk
+            - -X
+            - brokers=chatify-kafka:9092
             - topic
             - create
             - chat-events
             - --partitions
             - "3"
-            - --replication-factor
+            - --replicas
             - "1"
-            - --brokers
-            - chatify-kafka:9092
           env:
             - name: POD_IP
               valueFrom:

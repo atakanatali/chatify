@@ -59,13 +59,10 @@ spec:
               value: "--developer-mode 1"
             - name: SCYLLA_HOME
               value: /var/lib/scylla
-          command:
-            - /scylladb-entrypoint.sh
           args:
-            - --smp=1
-            - --memory=1G
             - --developer-mode=1
-            - --overprovisioned=1
+            - --smp=1
+            - --memory=400M
             - --broadcast-address=$(POD_IP)
             - --broadcast-rpc-address=$(POD_IP)
             - --listen-address=0.0.0.0
@@ -81,34 +78,28 @@ spec:
                     sleep 10
           resources:
             limits:
-              cpu: "2000m"
-              memory: "2Gi"
-            requests:
-              cpu: "500m"
+              cpu: "1000m"
               memory: "1Gi"
+            requests:
+              cpu: "250m"
+              memory: "400Mi"
           livenessProbe:
-            exec:
-              command:
-                - /opt/scylladb/scripts/healthcheck.sh
-                - --liveness
+            tcpSocket:
+              port: 9042
             initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
-            exec:
-              command:
-                - /opt/scylladb/scripts/healthcheck.sh
-                - --readiness
+            tcpSocket:
+              port: 9042
             initialDelaySeconds: 30
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
           startupProbe:
-            exec:
-              command:
-                - /opt/scylladb/scripts/healthcheck.sh
-                - --readiness
+            tcpSocket:
+              port: 9042
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3

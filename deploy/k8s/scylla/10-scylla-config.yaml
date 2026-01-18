@@ -13,6 +13,7 @@ data:
   scylla.yaml: |
     # Developer mode: runs on systems with fewer cores
     developer-mode: true
+    consistent_cluster_management: false
 
     # Data directory
     developer-mode-with-lwt: true
@@ -34,8 +35,8 @@ data:
 
     # Memory configuration for kind environment
     memory:
-      # 1GB for kind/local development
-      total_memory: 1073741824
+      # 400MB for kind/local development where resources are constrained
+      total_memory: 419430400
 
     # CPU configuration
     cpu:

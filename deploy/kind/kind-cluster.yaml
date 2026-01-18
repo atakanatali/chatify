@@ -29,7 +29,7 @@ nodes:
         hostPort: 9200
         protocol: TCP
       # AKHQ
-      - containerPort: 3080
+      - containerPort: 30082
         hostPort: 8081
         protocol: TCP
       # Kibana
@@ -37,6 +37,6 @@ nodes:
         hostPort: 5601
         protocol: TCP
       # Flink Web UI
-      - containerPort: 3081
+      - containerPort: 30081
         hostPort: 8082
         protocol: TCP

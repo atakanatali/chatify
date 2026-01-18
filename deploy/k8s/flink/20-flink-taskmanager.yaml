@@ -20,10 +20,12 @@ data:
   FLINK_PROPERTIES: |
     jobmanager.rpc.address: chatify-flink-jobmanager
     jobmanager.rpc.port: 6123
-    jobmanager.memory.process.size: 1600m
+    jobmanager.memory.process.size: 1024m
     jobmanager.execution.failover-strategy: region
-    taskmanager.memory.process.size: 1728m
+    taskmanager.memory.process.size: 1024m
     taskmanager.numberOfTaskSlots: 3
+    taskmanager.rpc.port: 6122
+    taskmanager.data.port: 6121
     parallelism.default: 2
     state.backend: rocksdb
     state.savepoints.dir: file:///flink/data/savepoints
@@ -142,6 +144,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: JOB_MANAGER_RPC_ADDRESS
+              value: "chatify-flink-jobmanager"
+            - name: TASK_MANAGER_NUMBER_OF_TASK_SLOTS
+              value: "3"
             - name: JAVA_OPTS
               value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
           args:
@@ -151,14 +157,13 @@ spec:
           resources:
             limits:
               cpu: "1000m"
-              memory: "2Gi"
-            requests:
-              cpu: "500m"
               memory: "1Gi"
+            requests:
+              cpu: "250m"
+              memory: "768Mi"
           livenessProbe:
             tcpSocket:
               port: 6122
-              protocol: TCP
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
@@ -166,7 +171,6 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 6122
-              protocol: TCP
             initialDelaySeconds: 15
             periodSeconds: 5
             timeoutSeconds: 3
