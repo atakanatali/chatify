@@ -17,7 +17,7 @@ data:
 
   # ScyllaDB Configuration
   # Keyspace and schema migrations are applied automatically on application startup
-  CHATIFY__SCYLLA__CONTACTPOINTS: "chatify-scylla"
+  CHATIFY__SCYLLA__CONTACTPOINTS: "chatify-scylla-0.chatify-scylla.chatify.svc.cluster.local"
   CHATIFY__SCYLLA__KEYSPACE: "chatify"
   CHATIFY__SCYLLA__APPLYSCHEMAONSTARTUP: "true"
   CHATIFY__SCYLLA__SCHEMAMIGRATIONTABLENAME: "schema_migrations"
@@ -26,7 +26,7 @@ data:
   CHATIFY__SCYLLA__PASSWORD: ""
 
   # Legacy Database Configuration (for backward compatibility, mapped to Scylla section)
-  CHATIFY__DATABASE__CONTACTPOINTS: "chatify-scylla"
+  CHATIFY__DATABASE__CONTACTPOINTS: "chatify-scylla-0.chatify-scylla.chatify.svc.cluster.local"
   CHATIFY__DATABASE__PORT: "9042"
   CHATIFY__DATABASE__KEYSPACE: "chatify"
   CHATIFY__DATABASE__USERNAME: ""

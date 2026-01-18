@@ -23,9 +23,6 @@ data:
             bootstrap.servers: chatify-kafka:9092
           schema-registry:
             type: memory
-          connect:
-            - name: chatify-kafka-connect
-              url: http://chatify-kafka-connect:8083
 ---
 apiVersion: v1
 kind: Service
@@ -65,7 +62,7 @@ spec:
     - name: http
       port: 3080
       targetPort: 8080
-      nodePort: 3080
+      nodePort: 30082
       protocol: TCP
   selector:
     app.kubernetes.io/name: chatify-akhq
@@ -99,25 +96,25 @@ spec:
     spec:
       containers:
         - name: akhq
-          image: tchiotludo/akhq:0.26.0
+          image: tchiotludo/akhq:0.25.1
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           volumeMounts:
             - name: config
-              mountPath: /home/akhq/conf/application.yml
+              mountPath: /app/application.yml
               subPath: application.yml
           env:
-            - name: MICRONAUT_ENVIRONMENTS
-              value: production
+            - name: MICRONAUT_LOGGER_LEVELS_ORG_AKHQ
+              value: INFO
           resources:
             limits:
               cpu: "1000m"
-              memory: "512Mi"
+              memory: "1Gi"
             requests:
               cpu: "250m"
-              memory: "256Mi"
+              memory: "512Mi"
           livenessProbe:
             httpGet:
               path: /

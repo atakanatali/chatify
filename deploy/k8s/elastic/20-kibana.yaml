@@ -84,13 +84,15 @@ spec:
               value: "chatify-kibana-reporting-key-32chars-min"
             - name: XPACK_SECURITY_ENCRYPTIONKEY
               value: "chatify-kibana-security-key-32chars-min"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=800"
           resources:
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 1000m
+              memory: 1Gi
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 512Mi
           livenessProbe:
             httpGet:
               path: /api/status

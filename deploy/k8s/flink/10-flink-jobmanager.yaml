@@ -17,9 +17,9 @@ data:
   FLINK_PROPERTIES: |
     jobmanager.rpc.address: chatify-flink-jobmanager
     jobmanager.rpc.port: 6123
-    jobmanager.memory.process.size: 1600m
+    jobmanager.memory.process.size: 1024m
     jobmanager.execution.failover-strategy: region
-    taskmanager.memory.process.size: 1728m
+    taskmanager.memory.process.size: 1024m
     taskmanager.numberOfTaskSlots: 3
     parallelism.default: 2
     state.backend: rocksdb
@@ -94,7 +94,7 @@ spec:
     - name: ui
       port: 8081
       targetPort: 8081
-      nodePort: 3081
+      nodePort: 30081
       protocol: TCP
   selector:
     app.kubernetes.io/name: chatify-flink-jobmanager
@@ -164,19 +164,17 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: JAVA_OPTS
-              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+            - name: JOB_MANAGER_RPC_ADDRESS
+              value: "chatify-flink-jobmanager"
           args:
-            - standalonesession
-            - --configDir
-            - /opt/flink/conf
+            - jobmanager
           resources:
             limits:
               cpu: "1000m"
-              memory: "2Gi"
-            requests:
-              cpu: "500m"
               memory: "1Gi"
+            requests:
+              cpu: "250m"
+              memory: "768Mi"
           livenessProbe:
             httpGet:
               path: /

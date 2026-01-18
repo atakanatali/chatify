@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-config
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: filebeat
+    app.kubernetes.io/part-of: chatify
+data:
+  filebeat.yml: |-
+    filebeat.inputs:
+    - type: container
+      paths:
+        - /var/log/containers/*.log
+      processors:
+        - add_kubernetes_metadata:
+            host: ${NODE_NAME}
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+        # Enrich logs with podId and appName fields 
+        - script:
+            lang: javascript
+            id: enrich_metadata
+            source: >
+              function process(event) {
+                  var podName = event.Get("kubernetes.pod.name");
+                  var appLabel = event.Get("kubernetes.labels.app_kubernetes_io_name");
+                  var containerName = event.Get("kubernetes.container.name");
+                  
+                  // Map podId
+                  if (podName) {
+                      event.Put("podId", podName);
+                  }
+                  
+                  // Map appName (prefer label, fallback to container name)
+                  if (appLabel) {
+                      event.Put("appName", appLabel);
+                  } else if (containerName) {
+                      event.Put("appName", containerName);
+                  }
+              }
+
+      # Drop Filebeat's own logs to avoid loops (optional)
+      # exclude_files: ['filebeat-*']
+
+    output.elasticsearch:
+      hosts: ['${ELASTICSEARCH_HOST:chatify-elastic}:${ELASTICSEARCH_PORT:9200}']
+      # No authentication for internal cluster
+
+    setup.kibana:
+      host: "chatify-kibana:5601"
+
+    logging.level: info

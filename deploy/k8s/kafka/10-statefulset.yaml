@@ -76,7 +76,7 @@ spec:
     spec:
       containers:
         - name: redpanda
-          image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+          image: docker.redpanda.com/redpandadata/redpanda:v22.3.13
           ports:
             - name: kafka
               containerPort: 9092
@@ -95,28 +95,6 @@ spec:
           args:
             - redpanda
             - start
-            - --kafka-alias=redpanda
-            - --set
-            - redpanda
-            - --advertise-kafka-addr=$(POD_IP):9092,0.0.0.0:29092
-            - --node-id
-            - "0"
-            - --kafka-apis
-            - 0.0.0.0:9092,0.0.0.0:29092
-            - --pandaproxy-addr
-            - 0.0.0.0:8082
-            - --advertise-pandaproxy-addr
-            - $(POD_IP):8082
-            - --admin
-            - 0.0.0.0:9644
-            - --data-dir
-            - /var/lib/redpanda/data
-            - --transaction
-            - coalesce-retry-ms=100
-            - --transaction
-            - initial-backoff-ms=100
-            - --create-topics
-            - -1
             - --set
             - redpanda.auto_create_topics_enabled=false
             - --set
@@ -125,17 +103,13 @@ spec:
             - redpanda.enable_transactions=true
             - --set
             - redpanda.default_topic_partitions=3
-            - --set
-            - redpanda.storage_available_bytes_min=1000000000
-            - --set
-            - redpanda.log_level=info
           resources:
             limits:
-              cpu: "2000m"
-              memory: "2Gi"
-            requests:
-              cpu: "500m"
+              cpu: "1000m"
               memory: "1Gi"
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
           livenessProbe:
             httpGet:
               path: /v1/status/ready
