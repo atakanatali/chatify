@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatify-redis
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: chatify-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chatify
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatify-redis-nodeport
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  type: NodePort
+  ports:
+    - name: redis-external
+      port: 30079
+      targetPort: 6379
+      nodePort: 30079
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: chatify-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chatify
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatify-redis
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-redis
+    app.kubernetes.io/component: cache
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chatify-redis
+      app.kubernetes.io/component: cache
+      app.kubernetes.io/part-of: chatify
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-redis
+        app.kubernetes.io/component: cache
+        app.kubernetes.io/part-of: chatify
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      containers:
+        - name: redis
+          image: redis:8.0-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            - name: REDIS_MAXMEMORY
+              value: "256mb"
+            - name: REDIS_MAXMEMORY_POLICY
+              value: "allkeys-lru"
+          args:
+            - redis-server
+            - --maxmemory
+            - $(REDIS_MAXMEMORY)
+            - --maxmemory-policy
+            - $(REDIS_MAXMEMORY_POLICY)
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - "everysec"
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi

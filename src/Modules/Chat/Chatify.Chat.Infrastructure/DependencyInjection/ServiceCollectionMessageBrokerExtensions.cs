@@ -1,6 +1,7 @@
 using Chatify.Chat.Application.Ports;
 using Chatify.Chat.Infrastructure.Options;
 using Chatify.Chat.Infrastructure.Services.ChatEventProducer;
+using Chatify.Chat.Infrastructure.Services.InMemoryChatEventProducer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -93,7 +94,8 @@ public static class ServiceCollectionMessageBrokerExtensions
     /// <b>Registered Services:</b> This method registers:
     /// <list type="bullet">
     /// <item><see cref="KafkaOptionsEntity"/> as a configured options object (singleton)</item>
-    /// <item><see cref="ChatEventProducerService"/> as implementation of <see cref="IChatEventProducerService"/> (singleton)</item>
+    /// <item><see cref="ChatEventProducerService"/> or <see cref="InMemoryChatEventProducerService"/>
+    /// as implementation of <see cref="IChatEventProducerService"/> (singleton)</item>
     /// </list>
     /// </para>
     /// <para>
@@ -106,10 +108,16 @@ public static class ServiceCollectionMessageBrokerExtensions
     /// <b>Validation:</b> The following validations are performed via
     /// <see cref="KafkaOptionsEntity.IsValid()"/>:
     /// <list type="bullet">
+    /// <item>When <see cref="KafkaOptionsEntity.UseInMemoryBroker"/> is <c>false</c>:
+    /// <list type="bullet">
     /// <item><see cref="KafkaOptionsEntity.BootstrapServers"/> must not be empty</item>
     /// <item><see cref="KafkaOptionsEntity.TopicName"/> must not be empty</item>
     /// <item><see cref="KafkaOptionsEntity.Partitions"/> must be greater than zero</item>
     /// <item><see cref="KafkaOptionsEntity.BroadcastConsumerGroupPrefix"/> must not be empty</item>
+    /// </list>
+    /// </item>
+    /// <item>When <see cref="KafkaOptionsEntity.UseInMemoryBroker"/> is <c>true</c>:
+    /// No validation of broker-specific fields is performed.</item>
     /// </list>
     /// </para>
     /// <para>
@@ -121,6 +129,11 @@ public static class ServiceCollectionMessageBrokerExtensions
     /// <item><c>retries=INT_MAX</c>: Retries indefinitely on transient failures</item>
     /// <item><c>compression.type=snappy</c>: Efficient network compression</item>
     /// </list>
+    /// </para>
+    /// <para>
+    /// <b>In-Memory Producer:</b> When <see cref="KafkaOptionsEntity.UseInMemoryBroker"/> is <c>true</c>,
+    /// <see cref="InMemoryChatEventProducerService"/> is registered instead. This service
+    /// simulates message broker behavior without external dependencies.
     /// </para>
     /// <para>
     /// <b>Service Lifetimes:</b>
@@ -173,7 +186,7 @@ public static class ServiceCollectionMessageBrokerExtensions
             throw new ArgumentException(
                 $"Invalid message broker configuration. " +
                 $"Please check the 'Chatify:MessageBroker' configuration section. " +
-                $"Required fields: BootstrapServers, TopicName. " +
+                $"Required fields: BootstrapServers, TopicName (unless UseInMemoryBroker is true). " +
                 $"Provided options: {brokerOptions}",
                 nameof(configuration));
         }
@@ -181,10 +194,17 @@ public static class ServiceCollectionMessageBrokerExtensions
         // Register the validated options as a singleton
         services.AddSingleton(brokerOptions);
 
-        // Register the event producer service as a singleton
-        // Note: ChatEventProducerService implements IDisposable, which will be
-        // handled by the DI container on application shutdown
-        services.AddSingleton<IChatEventProducerService, ChatEventProducerService>();
+        // Register the event producer service based on the UseInMemoryBroker flag
+        if (brokerOptions.UseInMemoryBroker)
+        {
+            services.AddSingleton<IChatEventProducerService, InMemoryChatEventProducerService>();
+        }
+        else
+        {
+            // Note: ChatEventProducerService implements IDisposable, which will be
+            // handled by the DI container on application shutdown
+            services.AddSingleton<IChatEventProducerService, ChatEventProducerService>();
+        }
 
         return services;
     }

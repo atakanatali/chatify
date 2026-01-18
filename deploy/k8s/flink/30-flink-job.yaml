@@ -1,0 +1,190 @@
+---
+# Placeholder Job for Flink Job Submission
+# This manifest provides a template for submitting Flink jobs to the Chatify Flink cluster.
+#
+# JOB SUBMISSION STRATEGIES:
+#
+# 1. CLI Submission (Recommended for Development):
+#    kubectl exec -n chatify deployment/chatify-flink-jobmanager -- \
+#      /opt/flink/bin/flink run \
+#      --class com.chatify.flink.processor.ChatEventProcessorJob \
+#      /opt/flink/usrlib/chatify-flink-jobs.jar
+#
+# 2. REST API Submission (Recommended for CI/CD):
+#    # First upload the JAR to JobManager
+#    kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 8081:8081
+#
+#    curl -X POST http://localhost:8081/jars/upload \
+#      -H "Content-Type: multipart/form-data" \
+#      -F "jarfile=@/path/to/chatify-flink-jobs.jar"
+#
+#    # Then run the job using the returned JAR ID
+#    curl -X POST http://localhost:8081/jars/{jar-id}/run \
+#      -H "Content-Type: application/json" \
+#      -d '{"entryClass":"com.chatify.flink.processor.ChatEventProcessorJob","parallelism":2}'
+#
+# 3. Kubernetes Job Submission (Recommended for Production):
+#    Create a Kubernetes Job that submits the Flink job and exits.
+#    The job runs the 'flink run' command against the JobManager.
+#
+# 4. Web UI Submission (For Ad-Hoc Testing):
+#    Access the Flink Web UI at http://localhost:8082
+#    Navigate to "Submit New Job" and upload the JAR file.
+#
+# CHATIFY FLINK JOB DETAILS:
+#
+# The Chatify Flink job processes chat events and produces analytics and rate limit events.
+#
+# Source Topic: chat-events
+# Sink Topics: analytics-events, rate-limit-events
+#
+# Job Class: com.chatify.flink.processor.ChatEventProcessorJob
+#
+# Processing:
+# - Reads ChatEventEntity from chat-events topic
+# - Aggregates by scope for analytics (tumbling windows, 60s)
+# - Aggregates by user for rate limiting (sliding windows, 60s)
+# - Writes AnalyticsEventEntity to analytics-events topic
+# - Writes RateLimitEventEntity to rate-limit-events topic
+#
+# Configuration via Environment Variables:
+# - KAFKA_BOOTSTRAP_SERVERS: Kafka broker addresses (default: chatify-kafka:9092)
+# - KAFKA_CONSUMER_GROUP_ID: Consumer group ID (default: chatify-flink-processor)
+# - ANALYTICS_WINDOW_SIZE_SECONDS: Analytics window size (default: 60)
+# - RATE_LIMIT_WINDOW_SIZE_SECONDS: Rate limit window size (default: 60)
+# - RATE_LIMIT_WARNING_THRESHOLD: Warning threshold (default: 80)
+# - RATE_LIMIT_THROTTLE_THRESHOLD: Throttle threshold (default: 100)
+# - RATE_LIMIT_FLAG_THRESHOLD: Flag threshold (default: 200)
+# - JOB_PARALLELISM: Job parallelism (default: 2)
+#
+# Build Instructions:
+#   cd src/Tools/FlinkJobs
+#   mvn clean package
+#   # Output: target/chatify-flink-jobs-1.0.0.jar
+#
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatify-flink-job-submitter
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-flink-job-submitter
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-flink-job-submitter
+        app.kubernetes.io/component: stream-processor
+        app.kubernetes.io/part-of: chatify
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: flink-job-submitter
+          image: flink:1.20.0-scala_2.12-java11
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Chatify Flink Job Submitter"
+              echo "==========================="
+              echo ""
+              echo "This job submits the Chatify Flink streaming job to the Flink cluster."
+              echo ""
+              echo "Job Details:"
+              echo "  Name: Chatify Chat Event Processor"
+              echo "  Class: com.chatify.flink.processor.ChatEventProcessorJob"
+              echo "  Source: chat-events"
+              echo "  Sinks: analytics-events, rate-limit-events"
+              echo ""
+              echo "Prerequisites:"
+              echo "  1. Build the JAR: cd src/Tools/FlinkJobs && mvn clean package"
+              echo "  2. Upload JAR to JobManager: kubectl cp target/chatify-flink-jobs-1.0.0.jar \\"
+              echo "     deployment/chatify-flink-jobmanager:/opt/flink/usrlib/"
+              echo ""
+              echo "To submit manually, uncomment the flink run command below:"
+              echo ""
+              # UNCOMMENT TO RUN:
+              # /opt/flink/bin/flink run \
+              #   -d \
+              #   -m chatify-flink-jobmanager:6123 \
+              #   -c com.chatify.flink.processor.ChatEventProcessorJob \
+              #   /opt/flink/usrlib/chatify-flink-jobs.jar
+              echo ""
+              echo "Job submission placeholder complete."
+              echo "In production, replace this with the actual flink run command."
+              echo ""
+              echo "Flink cluster status:"
+              /opt/flink/bin/flink list -m chatify-flink-jobmanager:6123 || echo "No jobs running yet"
+              echo ""
+              exit 0
+          env:
+            # Kafka Configuration
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "chatify-kafka:9092"
+
+            - name: KAFKA_CONSUMER_GROUP_ID
+              value: "chatify-flink-processor"
+
+            # Topic Names
+            - name: KAFKA_SOURCE_TOPIC
+              value: "chat-events"
+
+            - name: KAFKA_ANALYTICS_TOPIC
+              value: "analytics-events"
+
+            - name: KAFKA_RATE_LIMIT_TOPIC
+              value: "rate-limit-events"
+
+            # Checkpointing Configuration
+            - name: CHECKPOINT_INTERVAL_MS
+              value: "60000"
+
+            - name: CHECKPOINT_MIN_PAUSE_MS
+              value: "30000"
+
+            - name: CHECKPOINT_TIMEOUT_MS
+              value: "600000"
+
+            - name: CHECKPOINT_MAX_CONCURRENT
+              value: "1"
+
+            # Analytics Configuration
+            - name: ANALYTICS_WINDOW_SIZE_SECONDS
+              value: "60"
+
+            # Rate Limiting Configuration
+            - name: RATE_LIMIT_WINDOW_SIZE_SECONDS
+              value: "60"
+
+            - name: RATE_LIMIT_WARNING_THRESHOLD
+              value: "80"
+
+            - name: RATE_LIMIT_THROTTLE_THRESHOLD
+              value: "100"
+
+            - name: RATE_LIMIT_FLAG_THRESHOLD
+              value: "200"
+
+            # Job Configuration
+            - name: JOB_PARALLELISM
+              value: "2"
+
+            # JVM Configuration
+            - name: JAVA_OPTS
+              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xmx512m"
+
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+
+      backoffLimit: 3
+      activeDeadlineSeconds: 300

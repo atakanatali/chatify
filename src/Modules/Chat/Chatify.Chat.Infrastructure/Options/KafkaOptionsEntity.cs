@@ -156,6 +156,50 @@ public record KafkaOptionsEntity
     public string BroadcastConsumerGroupPrefix { get; init; } = "chatify-broadcast";
 
     /// <summary>
+    /// Gets a value indicating whether to use an in-memory message broker instead of Kafka.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Purpose:</b> When set to <c>true</c>, Chatify uses an in-memory implementation
+    /// of <see cref="Application.Ports.IChatEventProducerService"/> for testing and
+    /// development scenarios. This bypasses the need for an external Kafka broker.
+    /// </para>
+    /// <para>
+    /// <b>Default:</b> <c>false</c> if not specified.
+    /// </para>
+    /// <para>
+    /// <b>Usage Scenarios:</b>
+    /// <list type="bullet">
+    /// <item>Unit testing and integration testing without external dependencies</item>
+    /// <item>Local development when Kafka is not available</item>
+    /// <item>CI/CD pipelines to reduce infrastructure requirements</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// <b>Configuration Example:</b>
+    /// <code><![CDATA[
+    /// {
+    ///   "Chatify": {
+    ///     "MessageBroker": {
+    ///       "UseInMemoryBroker": true,
+    ///       "BootstrapServers": "localhost:9092",
+    ///       "TopicName": "chat-events",
+    ///       "Partitions": 3,
+    ///       "BroadcastConsumerGroupPrefix": "chatify-broadcast"
+    ///     }
+    ///   }
+    /// }
+    /// ]]></code>
+    /// </para>
+    /// <para>
+    /// <b>Important:</b> The in-memory broker does not provide persistence or
+    /// cross-process communication. Events are only available within the same
+    /// application instance. This setting should never be used in production.
+    /// </para>
+    /// </remarks>
+    public bool UseInMemoryBroker { get; init; }
+
+    /// <summary>
     /// Validates the Kafka options configuration.
     /// </summary>
     /// <returns>
@@ -165,10 +209,10 @@ public record KafkaOptionsEntity
     /// <para>
     /// This method performs the following validations:
     /// <list type="bullet">
-    /// <item><see cref="BootstrapServers"/> is not null or whitespace</item>
-    /// <item><see cref="TopicName"/> is not null or whitespace</item>
-    /// <item><see cref="Partitions"/> is greater than zero</item>
-    /// <item><see cref="BroadcastConsumerGroupPrefix"/> is not null or whitespace</item>
+    /// <item><see cref="BootstrapServers"/> is not null or whitespace (unless <see cref="UseInMemoryBroker"/> is true)</item>
+    /// <item><see cref="TopicName"/> is not null or whitespace (unless <see cref="UseInMemoryBroker"/> is true)</item>
+    /// <item><see cref="Partitions"/> is greater than zero (unless <see cref="UseInMemoryBroker"/> is true)</item>
+    /// <item><see cref="BroadcastConsumerGroupPrefix"/> is not null or whitespace (unless <see cref="UseInMemoryBroker"/> is true)</item>
     /// </list>
     /// </para>
     /// <para>
@@ -176,9 +220,21 @@ public record KafkaOptionsEntity
     /// If validation fails, an <see cref="ArgumentException"/> is thrown during
     /// service registration to fail fast before the application starts.
     /// </para>
+    /// <para>
+    /// <b>In-Memory Mode:</b> When <see cref="UseInMemoryBroker"/> is <c>true</c>,
+    /// validation of <see cref="BootstrapServers"/>, <see cref="TopicName"/>,
+    /// <see cref="Partitions"/>, and <see cref="BroadcastConsumerGroupPrefix"/> is
+    /// skipped since these fields are not used by the in-memory implementation.
+    /// </para>
     /// </remarks>
     public bool IsValid()
     {
+        // When using in-memory broker, skip validation of broker-specific fields
+        if (UseInMemoryBroker)
+        {
+            return true;
+        }
+
         if (string.IsNullOrWhiteSpace(BootstrapServers))
         {
             return false;

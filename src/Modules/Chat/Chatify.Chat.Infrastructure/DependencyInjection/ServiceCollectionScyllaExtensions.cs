@@ -157,6 +157,10 @@ public static class ServiceCollectionScyllaExtensions
         var cluster = BuildCluster(scyllaOptions);
         services.AddSingleton(cluster);
 
+        // Ensure keyspace exists before connecting to it
+        // This is required for Kubernetes deployments where the keyspace may not exist yet
+        EnsureKeyspaceExistsAsync(cluster, scyllaOptions.Keyspace).GetAwaiter().GetResult();
+
         // Create and connect to the session (keyspace)
         var session = cluster.Connect(scyllaOptions.Keyspace);
         services.AddSingleton(session);
@@ -261,5 +265,73 @@ public static class ServiceCollectionScyllaExtensions
         // Connect to the cluster
         var cluster = builder.Build();
         return cluster;
+    }
+
+    /// <summary>
+    /// Ensures the specified keyspace exists in ScyllaDB, creating it if necessary.
+    /// </summary>
+    /// <param name="cluster">
+    /// The connected Cassandra/ScyllaDB cluster. Must not be null.
+    /// </param>
+    /// <param name="keyspaceName">
+    /// The name of the keyspace to ensure exists. Must not be null or empty.
+    /// </param>
+    /// <returns>
+    /// A task representing the asynchronous operation.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="cluster"/> is null or <paramref name="keyspaceName"/> is null or empty.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Purpose:</b> This method ensures that the target keyspace exists before
+    /// the application attempts to connect to it. This is critical for Kubernetes
+    /// deployments where the database may be freshly deployed without any pre-existing
+    /// schema.
+    /// </para>
+    /// <para>
+    /// <b>Idempotency:</b> This method uses <c>CREATE KEYSPACE IF NOT EXISTS</c>,
+    /// making it safe to call multiple times. If the keyspace already exists,
+    /// the statement is a no-op.
+    /// </para>
+    /// <para>
+    /// <b>Replication Strategy:</b> For development and kind deployments, this method
+    /// uses <c>SimpleStrategy</c> with a replication factor of 1. Production deployments
+    /// should consider using <c>NetworkTopologyStrategy</c> with appropriate replication
+    /// factors for high availability.
+    /// </para>
+    /// <para>
+    /// <b>Migration Responsibility:</b> While this method ensures the keyspace exists,
+    /// the actual schema migrations (tables, indexes, etc.) are applied by the
+    /// schema migration service during application startup.
+    /// </para>
+    /// <para>
+    /// <b>Connection Management:</b> This method creates a temporary session to the
+    /// <c>system</c> keyspace to execute the DDL statement. The session is properly
+    /// disposed after the operation completes.
+    /// </para>
+    /// </remarks>
+    private static async Task EnsureKeyspaceExistsAsync(ICluster cluster, string keyspaceName)
+    {
+        GuardUtility.NotNull(cluster);
+        GuardUtility.NotNullOrWhiteSpace(keyspaceName);
+
+        // Connect to the system keyspace to execute DDL
+        // This avoids issues when the target keyspace doesn't exist yet
+        using var session = cluster.Connect();
+
+        // Create keyspace with SimpleStrategy for development/kind deployments
+        // Production should use NetworkTopologyStrategy with higher replication factor
+        var createKeyspaceCql = $@"
+            CREATE KEYSPACE IF NOT EXISTS {keyspaceName}
+            WITH replication = {{
+                'class': 'SimpleStrategy',
+                'replication_factor': '1'
+            }}
+            AND durable_writes = true;
+        ";
+
+        var statement = new SimpleStatement(createKeyspaceCql);
+        await session.ExecuteAsync(statement);
     }
 }

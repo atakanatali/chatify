@@ -32,3 +32,11 @@ nodes:
       - containerPort: 3080
         hostPort: 8081
         protocol: TCP
+      # Kibana
+      - containerPort: 30561
+        hostPort: 5601
+        protocol: TCP
+      # Flink Web UI
+      - containerPort: 3081
+        hostPort: 8082
+        protocol: TCP

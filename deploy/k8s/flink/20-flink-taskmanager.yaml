@@ -1,0 +1,180 @@
+---
+# ConfigMap for Flink TaskManager configuration
+# Provides configuration for Apache Flink TaskManager deployment.
+# TaskManagers execute the actual stream processing tasks.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chatify-flink-taskmanager-config
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-flink-taskmanager
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+data:
+  # Number of task slots per TaskManager determines parallelism capacity
+  TASK_SLOTS: "3"
+  # JobManager RPC address for TaskManager registration
+  FLINK_PROPERTIES: |
+    jobmanager.rpc.address: chatify-flink-jobmanager
+    jobmanager.rpc.port: 6123
+    jobmanager.memory.process.size: 1600m
+    jobmanager.execution.failover-strategy: region
+    taskmanager.memory.process.size: 1728m
+    taskmanager.numberOfTaskSlots: 3
+    parallelism.default: 2
+    state.backend: rocksdb
+    state.savepoints.dir: file:///flink/data/savepoints
+    state.checkpoints.dir: file:///flink/data/checkpoints
+    rest.address: 0.0.0.0
+    rest.port: 8081
+    # Kafka consumer configuration for consuming from chat-events topic
+    kafka.bootstrap.servers: chatify-kafka:9092
+    kafka.group.id: chatify-flink-consumer
+    kafka.auto.offset.reset: earliest
+    # High availability settings for JobManager recovery
+    high-availability: none
+    # Metrics reporting to Prometheus (optional, for observability)
+    metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+    metrics.reporter.prom.port: 9999
+    # Network buffers for data exchange between TaskManagers
+    taskmanager.network.numberOfBuffers: 2048
+    # Managed memory for RocksDB state backend
+    taskmanager.managed.memory.size: 256m
+---
+# Service for Flink TaskManager data exchange
+# Provides internal service for TaskManager communication and data transfer.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatify-flink-taskmanager
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-flink-taskmanager
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: data
+      port: 6121
+      targetPort: 6121
+      protocol: TCP
+    - name: rpc
+      port: 6122
+      targetPort: 6122
+      protocol: TCP
+    - name: query
+      port: 6125
+      targetPort: 6125
+      protocol: TCP
+    - name: prometheus
+      port: 9999
+      targetPort: 9999
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: chatify-flink-taskmanager
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+---
+# Deployment for Flink TaskManager
+# Manages the Apache Flink TaskManager pods that execute stream processing tasks.
+# Multiple replicas provide horizontal scaling for stream processing workloads.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatify-flink-taskmanager
+  namespace: chatify
+  labels:
+    app.kubernetes.io/name: chatify-flink-taskmanager
+    app.kubernetes.io/component: stream-processor
+    app.kubernetes.io/part-of: chatify
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chatify-flink-taskmanager
+      app.kubernetes.io/component: stream-processor
+      app.kubernetes.io/part-of: chatify
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chatify-flink-taskmanager
+        app.kubernetes.io/component: stream-processor
+        app.kubernetes.io/part-of: chatify
+        app.kubernetes.io/managed-by: kubectl
+    spec:
+      containers:
+        - name: taskmanager
+          image: flink:1.20.0-scala_2.12-java11
+          ports:
+            - name: data
+              containerPort: 6121
+              protocol: TCP
+            - name: rpc
+              containerPort: 6122
+              protocol: TCP
+            - name: query
+              containerPort: 6125
+              protocol: TCP
+            - name: prometheus
+              containerPort: 9999
+              protocol: TCP
+          env:
+            - name: FLINK_PROPERTIES
+              valueFrom:
+                configMapKeyRef:
+                  name: chatify-flink-taskmanager-config
+                  key: FLINK_PROPERTIES
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: JAVA_OPTS
+              value: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+          args:
+            - taskmanager
+            - --configDir
+            - /opt/flink/conf
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+          livenessProbe:
+            tcpSocket:
+              port: 6122
+              protocol: TCP
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6122
+              protocol: TCP
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: flink-data
+              mountPath: /flink/data
+      volumes:
+        - name: flink-data
+          emptyDir: {}
+      restartPolicy: Always

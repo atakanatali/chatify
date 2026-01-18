@@ -16,8 +16,69 @@
 ## Overview
 Chatify is a modular monolith built with Clean Architecture and SOLID principles. The project provides a real-time chat API with SignalR hubs, comprehensive middleware for cross-cutting concerns, and a layered architecture that separates domain logic from infrastructure implementation.
 
-## Architecture
-See [architecture.md](architecture.md) for the architectural overview and module responsibilities.
+## Core Architecture
+
+```mermaid
+graph TB
+ subgraph Client [Client Layer]
+  User[User / App] -->|Connects| Hub[SignalR Hub]
+  User -->|Sends Message| Hub
+ end
+
+ subgraph Host [API Host]
+  Hub -->|Invokes| Handler[Command Handler]
+ end
+
+ subgraph Core [Chat Application Core]
+  Handler -->|Validates| Policy{Domain Policy}
+  Policy -->|Pass| RateLimit[Rate Limiter]
+  RateLimit -->|Pass| Factory[Event Factory]
+  Factory -->|Creates| Event[ChatEvent]
+  Event -->|Produces| Producer[Kafka Producer]
+ end
+
+ subgraph Infra [Infrastructure]
+  Producer -->|Publishes| Kafka[Kafka Topic: chat-events]
+  Kafka -->|Consumes| Broadcaster[Broadcast Service]
+  Kafka -->|Consumes| History[History Writer]
+  Kafka -->|Consumes| Flink[Flink Analytics]
+  History -->|Persists| Scylla[ScyllaDB]
+  Broadcaster -->|Fan-out| Hub
+  Flink -->|Aggregates| Analytics[Analytics Events]
+  Flink -->|Detects| RateLimitEvents[Rate Limit Events]
+ end
+
+ style Client fill:#f9f9f9,stroke:#333,stroke-width:2px
+ style Host fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+ style Core fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+ style Infra fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+ style Flink fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+
+```
+
+### Package Structure
+
+```
+Chatify.BuildingBlocks
+```
+
+```
+Chatify.Chat.Domain
+```
+
+```
+Chatify.Chat.Application
+```
+
+```
+Chatify.Chat.Infrastructure
+```
+
+```
+Chatify.ChatApi
+```
+
+See [architecture.md](architecture.md) for the detailed architectural overview and module responsibilities.
 
 ### Solution Structure & Module Boundaries
 Chatify is organized around a modular monolith layout with a dedicated host, a shared kernel, and a chat module that follows Clean Architecture layering. The solution is anchored by `Chatify.sln` with the following structure:
@@ -297,6 +358,130 @@ Placeholders only. Future steps will describe local development workflows for Ch
 
 ## Testing
 
+### Test Structure
+
+Chatify has two test projects:
+
+- **Chatify.Chat.UnitTests** - Unit tests for domain logic and application handlers
+- **Chatify.Api.IntegrationTests** - Integration tests for the API using WebApplicationFactory
+
+### Running Unit Tests
+
+Unit tests validate domain policies and command handler behavior without external infrastructure dependencies.
+
+```bash
+# Run all unit tests
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj
+
+# Run with detailed output
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --logger "console;verbosity=detailed"
+
+# Run specific test
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --filter "FullyQualifiedName~ChatDomainPolicyTests"
+
+# Run with code coverage
+dotnet test tests/Chatify.Chat.UnitTests/Chatify.Chat.UnitTests.csproj --collect:"XPlat Code Coverage"
+```
+
+**Unit Test Coverage:**
+
+- `ChatDomainPolicyTests` - Validates domain policy enforcement for:
+  - Scope ID validation (null, empty, whitespace, length limits)
+  - Message text validation (null, length limits)
+  - Sender ID validation (null, empty, whitespace, length limits)
+  - Origin pod ID validation (null, empty, whitespace, length limits)
+
+- `SendChatMessageCommandHandlerTests` - Validates command handler behavior for:
+  - Successful message send with valid inputs
+  - Domain validation failures
+  - Rate limit exceeded scenarios
+  - Event production failures
+  - Pod identity validation failures
+  - DirectMessage scope handling
+  - Empty text handling
+
+### Running Integration Tests
+
+Integration tests use WebApplicationFactory to spin up the API in memory with the in-memory message broker enabled.
+
+```bash
+# Run all integration tests
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj
+
+# Run with detailed output
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj --logger "console;verbosity=detailed"
+
+# Run specific test
+dotnet test tests/Chatify.Api.IntegrationTests/Chatify.Api.IntegrationTests.csproj --filter "FullyQualifiedName~ChatApiIntegrationTests"
+```
+
+**Integration Test Coverage:**
+
+- Health check endpoint
+- Successful message send with enriched event response
+- Validation failures (empty scope ID, text exceeding max length)
+- Partition ordering (same scope goes to same partition)
+- DirectMessage scope handling
+
+**In-Memory Message Broker:**
+
+Integration tests use the `Chatify:MessageBroker:UseInMemoryBroker=true` configuration flag to bypass Kafka and use the `InMemoryChatEventProducerService`. This provides:
+
+- No external infrastructure requirements for tests
+- Deterministic test behavior
+- Fast test execution
+- Event verification through `GetEventsByPartition()` and `GetAllEvents()` methods
+
+### Running All Tests
+
+```bash
+# Run all tests in the solution
+dotnet test
+
+# Run all tests with detailed output
+dotnet test --logger "console;verbosity=detailed"
+
+# Run all tests with code coverage
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+### Test Configuration
+
+The in-memory message broker is configured via the `Chatify:MessageBroker:UseInMemoryBroker` setting:
+
+```json
+{
+  "Chatify": {
+    "MessageBroker": {
+      "UseInMemoryBroker": true,
+      "BootstrapServers": "localhost:9092",
+      "TopicName": "chat-events",
+      "Partitions": 3,
+      "BroadcastConsumerGroupPrefix": "chatify-broadcast"
+    }
+  }
+}
+```
+
+When `UseInMemoryBroker` is true:
+- `InMemoryChatEventProducerService` is registered instead of `ChatEventProducerService`
+- Kafka-specific configuration (BootstrapServers, TopicName, etc.) is not validated
+- Events are stored in memory for test verification
+
+### Test Best Practices
+
+1. **Use Moq for dependencies** - The unit tests use Moq to mock services like `IChatEventProducerService`, `IRateLimitService`, `IPodIdentityService`, and `IClockService`
+
+2. **Arrange-Act-Assert pattern** - All tests follow the AAA pattern for clarity and maintainability
+
+3. **Test names describe behavior** - Test method names clearly describe what is being tested and the expected outcome
+
+4. **No external dependencies** - Unit tests should never require external infrastructure (Kafka, Redis, ScyllaDB, Elasticsearch)
+
+5. **Deterministic tests** - All tests should be deterministic and produce the same results on every run
+
+6. **Fast execution** - Tests should run quickly to enable rapid development feedback
+
 ### SignalR Hub Testing with wscat
 
 **Note:** `wscat` does not support the SignalR protocol directly. Use SignalR client libraries for proper testing. The examples below use standard WebSocket clients with SignalR-compatible messages.
@@ -522,12 +707,61 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 │  - 9042 -> 30042 (ScyllaDB)                                                 │
 │  - 6379 -> 30079 (Redis)                                                    │
 │  - 9200 -> 30020 (Elasticsearch)                                            │
+│  - 5601 -> 30561 (Kibana)                                                   │
 │  - 8081 -> 3080 (AKHQ)                                                      │
+│  - 8082 -> 3081 (Flink Web UI)                                              │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Quick Start
+
+The easiest way to get started with Chatify is using the deployment scripts:
+
+```bash
+# Bootstrap entire environment (creates kind cluster and deploys all services)
+./scripts/up.sh
+```
+
+This script will:
+1. Create a kind cluster with proper port mappings
+2. Deploy infrastructure services (Kafka, Redis, Elasticsearch, ScyllaDB, Flink)
+3. Deploy management UIs (AKHQ, Kibana)
+4. Deploy the Chat API application
+5. Wait for all services to be ready
+
+**Access the services:**
+
+Services are accessible via the following ports:
+- Chat API (HTTP):  http://localhost:8080
+- Chat API (HTTPS): https://localhost:8443
+- Kafka:            localhost:9092
+- ScyllaDB:         localhost:9042
+- Redis:            localhost:6379
+- Elasticsearch:    http://localhost:9200
+- AKHQ (Kafka UI):  http://localhost:8081
+- Kibana:           http://localhost:5601
+- Flink Web UI:     http://localhost:8082
+
+**Other useful commands:**
+
+```bash
+# Check deployment status (pods, services, events)
+./scripts/status.sh
+
+# View logs for Chat API
+./scripts/logs-chatify.sh
+
+# Port forward services for local access
+./scripts/port-forward.sh
+
+# Tear down environment and delete kind cluster
+./scripts/down.sh
+```
+
+#### Manual Deployment (Advanced)
+
+If you prefer to deploy components manually:
 
 1. **Create the kind cluster:**
 
@@ -535,20 +769,22 @@ Chatify provides Kubernetes manifests optimized for local development using kind
 kind create cluster --config deploy/kind/kind-cluster.yaml
 ```
 
-2. **Apply Kubernetes manifests:**
+2. **Apply Kubernetes manifests in order:**
 
 ```bash
-# Create namespace
+# Apply namespace
 kubectl apply -f deploy/k8s/00-namespace.yaml
 
-# Create ConfigMap
-kubectl apply -f deploy/k8s/chat-api/10-configmap.yaml
+# Deploy infrastructure components
+kubectl apply -f deploy/k8s/kafka/
+kubectl apply -f deploy/k8s/redis/
+kubectl apply -f deploy/k8s/elastic/
+kubectl apply -f deploy/k8s/scylla/
+kubectl apply -f deploy/k8s/flink/
+kubectl apply -f deploy/k8s/akhq/
 
-# Create deployment
-kubectl apply -f deploy/k8s/chat-api/20-deployment.yaml
-
-# Create service
-kubectl apply -f deploy/k8s/chat-api/30-service.yaml
+# Deploy Chat API application
+kubectl apply -f deploy/k8s/chat-api/
 ```
 
 3. **Verify deployment:**
@@ -572,27 +808,6 @@ kubectl port-forward -n chatify svc/chatify-chat-api 8080:80
 
 # Or access via NodePort (from kind)
 curl http://localhost:8080/health/live
-```
-
-#### Using Deployment Scripts
-
-The `scripts/` directory provides helper scripts for common operations:
-
-```bash
-# Bootstrap entire environment
-./scripts/up.sh
-
-# Tear down environment
-./scripts/down.sh
-
-# Check deployment status
-./scripts/status.sh
-
-# View logs
-./scripts/logs-chatify.sh
-
-# Port forward services
-./scripts/port-forward.sh
 ```
 
 #### Health Endpoints
@@ -639,10 +854,12 @@ The ConfigMap `chatify-chat-api-config` contains all infrastructure endpoints:
 The following infrastructure services must be deployed before ChatApi:
 
 1. **Kafka** - Message broker for chat events
-2. **Redis** - Caching for presence and rate limiting
+2. **Redis** - Caching for presence tracking, rate limiting, and pod identity management
 3. **ScyllaDB** - NoSQL database for chat history
 4. **Elasticsearch** - Log aggregation and search
-5. **AKHQ** - Kafka management UI
+5. **Kibana** - Log visualization and analysis
+6. **AKHQ** - Kafka management UI
+7. **Flink** - Stream processing for advanced analytics and event aggregation
 
 ##### Kafka Deployment (Redpanda)
 
@@ -775,6 +992,667 @@ echo '{"messageId":"test","scopeType":0,"scopeId":"general","senderId":"test","t
 ```
 
 Note: Port mapping `9092 -> 30092` is configured in `deploy/kind/kind-cluster.yaml`.
+
+##### Redis Deployment
+
+Redis serves as the caching layer for Chatify, providing low-latency data storage for:
+- **Presence Tracking**: Real-time user online/offline status across SignalR connections
+- **Rate Limiting**: Per-user message rate limits to prevent spam and abuse
+- **Pod Identity Management**: Distributed coordination across multiple ChatApi pods
+
+**Deploy Redis:**
+
+```bash
+# Deploy Redis deployment with services
+kubectl apply -f deploy/k8s/redis/10-redis-deployment.yaml
+
+# Wait for Redis to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-redis -n chatify --timeout=120s
+
+# Verify Redis is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-redis
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-redis
+```
+
+**Redis Configuration:**
+- **Image**: `redis:8.0-alpine`
+- **Memory Limit**: 256MB with `allkeys-lru` eviction policy
+- **Persistence**: AOF (Append Only File) with everysec fsync
+- **Port**: 6379 (internal), 30079 (via NodePort)
+- **Service**: `chatify-redis:6379` (ClusterIP), `chatify-redis-nodeport` (NodePort)
+
+**Redis Data Structures:**
+
+Chatify uses Redis for the following data patterns:
+
+```
+# Presence Tracking: Key-Value with TTL
+SET user:{userId}:presence {podId}:{connectionId} EX 300
+
+# Rate Limiting: String with increment
+INCR user:{userId}:ratelimit:60s
+EXPIRE user:{userId}:ratelimit:60s 60
+
+# Pod Identity: Simple key-value
+SET pod:{podName}:identity {metadata} EX 3600
+```
+
+**Testing Redis:**
+
+```bash
+# Connect to Redis from host machine
+redis-cli -h localhost -p 30079
+
+# Or via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-redis-nodeport 6379:30079
+redis-cli -h localhost -p 6379
+
+# Test Redis operations
+redis-cli -h localhost -p 30079
+> PING
+PONG
+> SET test-key "Hello Redis"
+OK
+> GET test-key
+"Hello Redis"
+> KEYS user:*
+1) "user:123:presence"
+2) "user:456:ratelimit:60s"
+```
+
+**Monitoring Redis:**
+
+```bash
+# View Redis logs
+kubectl logs -f -n chatify deployment/chatify-redis
+
+# Check Redis info
+kubectl exec -n chatify deployment/chatify-redis -- redis-cli INFO
+
+# Monitor Redis commands in real-time
+kubectl exec -n chatify deployment/chatify-redis -- redis-cli MONITOR
+```
+
+**Production Considerations:**
+
+For production deployments, consider:
+- **Redis Sentinel** for high availability and automatic failover
+- **Redis Cluster** for horizontal scaling and data sharding
+- **Persistent volumes** instead of emptyDir for data durability
+- **Memory optimization** based on actual usage patterns
+- **Security**: Enable AUTH and TLS for production environments
+
+##### ScyllaDB Deployment
+
+ScyllaDB is a high-performance, distributed NoSQL database compatible with Apache Cassandra. Chatify uses ScyllaDB for persistent chat history storage with excellent write performance and linear scalability.
+
+**Deploy ScyllaDB:**
+
+```bash
+# Deploy ScyllaDB StatefulSet with services
+kubectl apply -f deploy/k8s/scylla/10-scylla-config.yaml
+kubectl apply -f deploy/k8s/scylla/20-scylla-statefulset.yaml
+kubectl apply -f deploy/k8s/scylla/30-scylla-service.yaml
+
+# Wait for ScyllaDB to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-scylla -n chatify --timeout=300s
+
+# Note: Database schema is managed via code-first migrations
+# Keyspace is created on application startup IF it doesn't exist
+# Tables and other schema objects are created via migrations on startup
+# See the "Schema Migrations" section below for details
+```
+
+**ScyllaDB Configuration:**
+- **Image**: `scylladb/scylla:5.4.0`
+- **Developer Mode**: Enabled for kind/local development
+- **Memory**: 1GB (configurable via resources)
+- **Storage**: 5Gi persistent volume
+- **Port**: 9042 (CQL), 30042 (via NodePort)
+- **Service**: `chatify-scylla:9042` (ClusterIP), `chatify-scylla-nodeport` (NodePort)
+
+**Database Schema:**
+
+The ScyllaDB schema initialization creates the following:
+
+**Keyspace: `chatify`**
+- Replication Strategy: SimpleStrategy with RF=1 (development)
+- Durable writes: Enabled
+
+**Table: `chat_messages`**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `scope_id` | text | Partition key: Composite scope identifier (format: "ScopeType:ScopeId") |
+| `created_at_utc` | timestamp | Clustering key: Message creation timestamp (ASC order) |
+| `message_id` | uuid | Clustering key: Unique message identifier |
+| `sender_id` | text | User/service identifier who sent the message |
+| `text` | text | Message content |
+| `origin_pod_id` | text | Pod that originated the message |
+| `broker_partition` | int | Kafka partition where message was produced |
+| `broker_offset` | bigint | Kafka offset of the message |
+
+**Primary Key Design:**
+- **Partition Key**: `(scope_id)` - Groups all messages in a scope together for efficient queries
+- **Clustering Key**: `(created_at_utc ASC, message_id)` - Time-based ordering with UUID for uniqueness
+
+**Table Options:**
+- `gc_grace_seconds`: 864000 (10 days)
+- `compaction`: SizeTieredCompactionStrategy
+- `compression`: LZ4Compressor
+
+**Schema Migrations:**
+
+Chatify uses a **code-first schema migration system** for ScyllaDB. Migrations are implemented as C# classes that execute CQL statements during application startup, similar to how EF Core manages migrations but tailored for ScyllaDB.
+
+**Migration Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ScyllaDB Schema Migration System                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. MIGRATION CLASSES (Code-First)                                          │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Each module owns: Migrations/{ModuleName}/ in Infrastructure    │    │
+│     │                                                                     │    │
+│     │  public class V001_CreateChatMessagesTable : IScyllaSchemaMigration │    │
+│     │  {                                                                   │    │
+│     │      string Name => "V001_CreateChatMessagesTable";                  │    │
+│     │      string AppliedBy => "Chatify.Chat.Infrastructure";             │    │
+│     │                                                                     │    │
+│     │      Task ApplyAsync(ISession session, CancellationToken ct)          │    │
+│     │      {                                                               │    │
+│     │          var cql = "CREATE TABLE IF NOT EXISTS...";                   │    │
+│     │          return session.ExecuteAsync(new SimpleStatement(cql), ct);  │    │
+│     │      }                                                               │    │
+│     │  }                                                                   │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  2. MIGRATION HISTORY TABLE                                                │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Table: schema_migrations (configurable via Scylla options)      │    │
+│     │  Columns:                                                          │    │
+│     │    - migration_name (text, PRIMARY KEY)                            │    │
+│     │    - applied_by (text)                                             │    │
+│     │    - applied_at_utc (timestamp)                                    │    │
+│     │                                                                     │    │
+│     │  Purpose: Track which migrations have been applied                  │    │
+│     │  Similar to: __EFMigrationsHistory in EF Core                      │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  3. MIGRATION SERVICE                                                      │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  ScyllaSchemaMigrationService                                      │    │
+│     │  ────────────────────────────────────────────────────────────  │    │
+│     │  Responsibilities:                                                  │    │
+│     │  - Discover all IScyllaSchemaMigration implementations             │    │
+│     │  - Query schema_migrations table for applied migrations           │    │
+│     │  - Filter pending migrations (not in history table)                │    │
+│     │  - Apply migrations in order (alphabetical by name)                │    │
+│     │  - Record each applied migration in history table                  │    │
+│     │  - Handle errors (fail-fast or continue based on config)           │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  4. STARTUP BEHAVIOR                                                       │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Configuration: Chatify:Scylla:ApplySchemaOnStartup               │    │
+│     │                                                                     │    │
+│     │  When true (default):                                               │    │
+│     │    1. Application starts                                            │    │
+│     │    2. AddScyllaChatify creates keyspace IF NOT EXISTS               │    │
+│     │    3. AddScyllaChatify connects to keyspace                         │    │
+│     │    4. Migration background service runs                             │    │
+│     │    5. Pending migrations are applied                                │    │
+│     │    6. Application begins handling requests                         │    │
+│     │                                                                     │    │
+│     │  When false:                                                        │    │
+│     │    - Keyspace must exist (connection will fail if missing)          │    │
+│     │    - Migrations must be applied manually                            │    │
+│     │    - Useful for production environments with manual control         │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Configuration Keys:**
+
+```json
+{
+  "Chatify": {
+    "Scylla": {
+      "Keyspace": "chatify",
+      "ApplySchemaOnStartup": true,
+      "SchemaMigrationTableName": "schema_migrations",
+      "FailFastOnSchemaError": true
+    }
+  }
+}
+```
+
+| Configuration Key | Type | Default | Description |
+|-------------------|------|---------|-------------|
+| `Keyspace` | string | "chatify" | Target keyspace for migrations |
+| `ApplySchemaOnStartup` | boolean | true | Auto-apply migrations on startup |
+| `SchemaMigrationTableName` | string | "schema_migrations" | Table name for migration history |
+| `FailFastOnSchemaError` | boolean | true | Stop startup if migration fails |
+
+**Existing Migrations:**
+
+The Chat module includes the following migrations:
+
+| Migration ID | Module | Description | Location |
+|--------------|--------|-------------|----------|
+| `0001_init_chat` | Chat | Creates chat_messages table (keyspace created by AddScyllaChatify) | `src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs` |
+
+**Note:** The keyspace is created automatically by `AddScyllaChatify` during application startup (via `EnsureKeyspaceExistsAsync`), before migrations run. The `0001_init_chat` migration creates the `chat_messages` table.
+
+**Creating a New Migration:**
+
+1. **Create migration class** in `Migrations/{ModuleName}/`:
+   ```csharp
+   using Cassandra;
+
+   namespace Chatify.Chat.Infrastructure.Migrations.Chat;
+
+   /// <summary>
+   /// Example migration for adding a new index.
+   /// </summary>
+   public sealed class V002_AddMessageIndex : IScyllaSchemaMigration
+   {
+       /// <inheritdoc/>
+       public string ModuleName => "Chat";
+
+       /// <inheritdoc/>
+       public string MigrationId => "0002_add_message_index";
+
+       /// <inheritdoc/>
+       public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+       {
+           var cql = "CREATE INDEX IF NOT EXISTS ON chatify.chat_messages (sender_id);";
+           var statement = new SimpleStatement(cql);
+           return session.ExecuteAsync(statement, cancellationToken);
+       }
+
+       /// <inheritdoc/>
+       public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
+       {
+           var cql = "DROP INDEX IF EXISTS chatify.chat_messages_sender_id_idx;";
+           var statement = new SimpleStatement(cql);
+           return session.ExecuteAsync(statement, cancellationToken);
+       }
+   }
+   ```
+
+2. **Register migration service** in `Program.cs`:
+   ```csharp
+   builder.Services.AddScyllaSchemaMigrationsChatify(builder.Configuration);
+   ```
+
+3. **Run the application** - migrations are applied automatically on startup
+
+   Note: The migration service is already registered in `Program.cs`. New migrations
+   implementing `IScyllaSchemaMigration` are automatically discovered via reflection.
+
+**Migration Naming Convention:**
+
+- Use version prefix: `V001_`, `V002_`, `V003_`, etc.
+- Zero-padding ensures correct alphabetical ordering
+- Descriptive name after version: `CreateChatMessagesTable`, `AddUserPresenceTable`
+- Example: `V001_CreateChatMessagesTable`, `V002_AddIndexes`, `V003_CreateMaterializedView`
+
+**Checking Applied Migrations:**
+
+```bash
+# Connect to ScyllaDB
+cqlsh localhost --port 30042
+
+# Query migration history
+SELECT * FROM chatify.schema_migrations;
+
+# Expected output:
+# module_name | migration_id     | applied_at_utc
+#-------------+------------------+--------------------------
+# Chat        | 0001_init_chat   | 2026-01-16 10:30:00.000Z
+```
+
+**Best Practices:**
+
+1. **Use IF NOT EXISTS**: Make migrations idempotent by using `IF NOT EXISTS` clauses
+2. **One change per migration**: Keep migrations focused on a single schema change
+3. **Test locally**: Always test migrations in development before deploying
+4. **Version control**: Migrations are part of the codebase and version controlled
+5. **Never modify applied migrations**: Create new migrations instead
+6. **Use transactions for data**: Use lightweight transactions (LWT) for data consistency
+
+**Testing ScyllaDB:**
+
+```bash
+# Connect to ScyllaDB from host machine
+cqlsh localhost --port 30042
+
+# Or via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-scylla-nodeport 9042:30042
+cqlsh localhost --port 9042
+
+# Query the schema
+DESCRIBE KEYSPACES;
+DESCRIBE KEYSPACE chatify;
+
+# Query chat messages
+SELECT * FROM chatify.chat_messages LIMIT 10;
+
+# Query messages for a specific scope
+SELECT * FROM chatify.chat_messages
+WHERE scope_id = 'Channel:general'
+LIMIT 100;
+```
+
+**Monitoring ScyllaDB:**
+
+```bash
+# View ScyllaDB logs
+kubectl logs -f -n chatify statefulset/chatify-scylla
+
+# Check ScyllaDB status
+kubectl exec -n chatify statefulset/chatify-scylla -- nodetool status
+
+# View table statistics
+kubectl exec -n chatify statefulset/chatify-scylla -- nodetool tablestats chatify
+
+# Monitor compaction
+kubectl exec -n chatify statefulset/chatify-scylla -- nodotpl compactionstats
+```
+
+**Production Considerations:**
+
+For production deployments, consider:
+- **Multi-node cluster** with 3+ replicas for high availability
+- **NetworkTopologyStrategy** with proper data center awareness
+- **Replication factor**: 3 for production critical data
+- **Proper resource allocation**: 8+ CPU cores, 16GB+ memory per node
+- **SSD storage** with sufficient IOPS
+- **Regular backups** using nodetool snapshot
+- **Monitoring** with ScyllaDB Monitoring Stack (Prometheus + Grafana)
+- **Security**: Enable SSL/TLS for client and internode communication
+- **Authentication**: Enable and configure proper auth providers
+
+**Schema Evolution:**
+
+When modifying the schema in production:
+- Use `ALTER TABLE` for non-breaking changes
+- Never drop columns without proper migration
+- Test schema changes in development first
+- Monitor compaction and performance after schema changes
+- Consider using lightweight transactions (LWT) for critical operations
+
+##### Flink Deployment
+
+Apache Flink is a distributed stream processing framework designed for high-performance, low-latency, and scalable real-time data processing. Chatify uses Flink for advanced stream processing operations on chat events, including real-time analytics, aggregations, and complex event processing.
+
+**Deploy Flink:**
+
+```bash
+# Deploy Flink JobManager (cluster coordinator)
+kubectl apply -f deploy/k8s/flink/10-flink-jobmanager.yaml
+
+# Wait for JobManager to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-flink-jobmanager -n chatify --timeout=120s
+
+# Deploy Flink TaskManagers (worker nodes)
+kubectl apply -f deploy/k8s/flink/20-flink-taskmanager.yaml
+
+# Wait for TaskManagers to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-flink-taskmanager -n chatify --timeout=120s
+
+# (Optional) Run the placeholder job submission
+kubectl apply -f deploy/k8s/flink/30-flink-job.yaml
+```
+
+**Flink Configuration:**
+
+| Component | Value | Description |
+|-----------|-------|-------------|
+| **JobManager** | `chatify-flink-jobmanager` | Cluster coordinator and job scheduler |
+| **TaskManagers** | 2 replicas (default) | Worker nodes that execute tasks |
+| **Task Slots** | 3 per TaskManager | Parallel task execution capacity |
+| **State Backend** | RocksDB | Distributed state storage |
+| **Checkpointing** | Enabled | Exactly-once processing guarantees |
+| **Parallelism** | 2 (default) | Default parallel execution |
+| **Web UI** | Port 8081 (internal) | Flink dashboard and job management |
+
+**Flink Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Chatify Flink Cluster                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Flink JobManager                               │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │  │
+│  │  │ Job Scheduling│  │Checkpoint Mgmt│  │   Web UI     │             │  │
+│  │  │   Coordinator │  │  Coordinator  │  │  (Port 8081) │             │  │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘             │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                              │                                             │
+│                              │ RPC (6123)                                   │
+│                              ▼                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                   TaskManager 1         TaskManager 2                │  │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Task Slot 1 │ Task Slot 2 │ Task Slot 3 │  (per TaskManager)   │  │  │
+│  │  └────────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                       │  │
+│  │  Source: Kafka (chat-events) ──► Process ──► Sink: ScyllaDB/ES      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Access Flink Web UI:**
+
+```bash
+# Port forward to local machine
+kubectl port-forward -n chatify svc/chatify-flink-jobmanager-ui 8082:8081
+
+# Or access via NodePort (from kind)
+# Port mapping 8082 -> 3081 is configured in deploy/kind/kind-cluster.yaml
+```
+
+Open your browser to `http://localhost:8082` to access the Flink Web UI.
+
+**Flink Web UI Features:**
+
+- **Overview**: Cluster health, TaskManager status, available task slots
+- **Running Jobs**: Active streaming jobs with metrics and checkpoints
+- **Completed Jobs**: Historical job execution records
+- **Task Managers**: Resource utilization and slot allocation
+- **Checkpoints**: Checkpoint statistics and failure history
+- **Submit New Job**: Upload JAR files and submit Flink jobs
+
+**Job Submission Strategy:**
+
+Chatify supports multiple job submission strategies for different use cases:
+
+**1. CLI Submission (Recommended for Development)**
+
+Submit jobs directly from the JobManager pod:
+
+```bash
+# Execute Flink CLI from JobManager
+kubectl exec -n chatify deployment/chatify-flink-jobmanager -- /opt/flink/bin/flink run \
+  --class com.chatify.flink.ChatEventProcessorJob \
+  --parallelism 2 \
+  /opt/flink/usrlib/chatify-flink-jobs.jar
+```
+
+**2. REST API Submission (Recommended for CI/CD)**
+
+Use the Flink REST API for automated job submission:
+
+```bash
+# First, port forward to the JobManager
+kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 8081:8081
+
+# Upload the JAR file
+JAR_ID=$(curl -X POST http://localhost:8081/jars/upload \
+  -H "Content-Type: multipart/form-data" \
+  --form "jarfile=@/path/to/chatify-flink-jobs.jar" | \
+  jq -r '.["id"]'")
+
+# Run the job
+curl -X POST "http://localhost:8081/jars/$JAR_ID/run" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entryClass": "com.chatify.flink.ChatEventProcessorJob",
+    "parallelism": 2,
+    "programArgs": "--env=production"
+  }'
+```
+
+**3. Kubernetes Job Submission (Recommended for Production)**
+
+Create a Kubernetes Job that submits the Flink job and exits:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chatify-flink-job-submitter
+  namespace: chatify
+spec:
+  template:
+    spec:
+      containers:
+        - name: flink-submit
+          image: flink:1.20.0-scala_2.12-java11
+          command:
+            - /opt/flink/bin/flink
+            - run
+            - -m
+            - chatify-flink-jobmanager:6123
+            - -d
+            - /opt/flink/usrlib/chatify-flink-jobs.jar
+      restartPolicy: Never
+```
+
+**4. Web UI Submission (For Ad-Hoc Testing)**
+
+Access the Flink Web UI at `http://localhost:8082` and use the "Submit New Job" page to upload JAR files and configure job parameters.
+
+**Example Flink Job for Chatify:**
+
+A typical Flink job for Chatify would:
+
+1. **Consume from Kafka**: Read chat events from the `chat-events` topic
+2. **Process the Stream**: Apply transformations, aggregations, or windowing
+3. **Sink to Storage**: Write results to ScyllaDB, Elasticsearch, or back to Kafka
+
+```java
+// Example: Real-time chat statistics per scope
+DataStream<ChatStats> stats = env
+    .addSource(kafkaSource)                    // Read from chat-events
+    .keyBy(ChatEvent::getScopeId)              // Partition by scope
+    .window(TumblingEventTimeWindows.of(Time.minutes(5)))  // 5-minute windows
+    .aggregate(new MessageCountAggregator())   // Count messages
+    .addSink(scyllaSink);                      // Write to ScyllaDB
+```
+
+**Verifying Flink Deployment:**
+
+**1. Verify Flink is running:**
+
+```bash
+# Check pods
+kubectl get pods -n chatify -l app.kubernetes.io/part-of=chatify,app.kubernetes.io/component=stream-processor
+
+# Check services
+kubectl get svc -n chatify -l app.kubernetes.io/part-of=chatify,app.kubernetes.io/component=stream-processor
+
+# Expected output:
+# NAME                                   TYPE        CLUSTER-IP       PORT(S)
+# chatify-flink-jobmanager               ClusterIP   None             6123/TCP,6124/TCP,6125/TCP,8081/TCP
+# chatify-flink-jobmanager-ui            NodePort    10.96.0.0        8081:3081/TCP
+# chatify-flink-taskmanager              ClusterIP   None             6121/TCP,6122/TCP,6125/TCP,9999/TCP
+```
+
+**2. Check Flink cluster status via Web UI:**
+
+1. Navigate to `http://localhost:8082`
+2. Verify the cluster overview shows:
+   - 1 JobManager running
+   - 2 TaskManagers running
+   - 6 total task slots (3 per TaskManager)
+   - 0 jobs running (initial state)
+
+**3. List running jobs via CLI:**
+
+```bash
+kubectl exec -n chatify deployment/chatify-flink-jobmanager -- \
+  /opt/flink/bin/flink list -m chatify-flink-jobmanager:6123
+```
+
+**4. Check logs:**
+
+```bash
+# JobManager logs
+kubectl logs -f -n chatify deployment/chatify-flink-jobmanager
+
+# TaskManager logs
+kubectl logs -f -n chatify deployment/chatify-flink-taskmanager
+```
+
+**Monitoring Flink:**
+
+**Flink Metrics Endpoints:**
+
+Flink exposes Prometheus metrics for monitoring:
+
+```bash
+# Access Flink metrics
+kubectl port-forward -n chatify deployment/chatify-flink-jobmanager 9999:9999
+curl http://localhost:9999/metrics
+```
+
+**Key Metrics to Monitor:**
+
+- `taskmanager_Status_JVM_CPU.Load` - CPU utilization per TaskManager
+- `taskmanager_Status_JVM_Memory_Heap.Used` - Heap memory usage
+- `numRecordsIn` vs `numRecordsOut` - Throughput per operator
+- `buffers_inPoolUsage` - Network buffer utilization
+- `checkpoint_duration` - Checkpoint completion time
+- `last_checkpoint_alignment_buffered` - Alignment buffer size during checkpoints
+
+**Production Considerations:**
+
+For production deployments of Flink, consider:
+
+**High Availability:**
+- Deploy multiple JobManagers with ZooKeeper or Kubernetes HA
+- Configure savepoints for job state recovery
+- Use persistent volumes for checkpoint and savepoint storage
+
+**Resource Management:**
+- Scale TaskManagers based on workload (use HorizontalPodAutoscaler)
+- Tune task slots based on parallelism requirements
+- Configure appropriate heap and managed memory sizes
+
+**State Management:**
+- Use RocksDB state backend for large state
+- Configure incremental checkpoints for faster recovery
+- Enable unaligned checkpoints for low-latency jobs
+- Set appropriate checkpoint intervals based on tolerance for replay
+
+**Monitoring:**
+- Integrate with Prometheus for metrics collection
+- Set up alerts for checkpoint failures, backpressure, and task failures
+- Monitor lag in Kafka consumption (consumer lag metrics)
+
+**Security:**
+- Enable TLS/SSL for network communication
+- Configure authentication and authorization for the Web UI and REST API
+- Use Kubernetes network policies to restrict pod-to-pod communication
 
 #### Cleanup
 
@@ -923,6 +1801,259 @@ The Observability module is reserved for:
 - Distributed tracing (OpenTelemetry)
 - Health checks
 - Custom dashboards and alerting rules
+
+### Elasticsearch and Kibana Deployment
+
+Chatify uses Elasticsearch for centralized log aggregation and Kibana for log visualization and analysis. Both services are deployed as Kubernetes manifests in the `chatify` namespace.
+
+#### Deploy Elasticsearch
+
+Elasticsearch is deployed as a StatefulSet with persistent storage for log durability.
+
+**Deploy Elasticsearch:**
+
+```bash
+# Deploy Elasticsearch StatefulSet with services
+kubectl apply -f deploy/k8s/elastic/10-elasticsearch.yaml
+
+# Wait for Elasticsearch to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-elastic -n chatify --timeout=300s
+
+# Verify Elasticsearch is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-elastic
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-elastic
+```
+
+**Elasticsearch Configuration:**
+- **Image**: `docker.elastic.co/elasticsearch/elasticsearch:8.16.1`
+- **Discovery Type**: single-node (development)
+- **Java Heap**: 512MB (configurable via `ES_JAVA_OPTS`)
+- **Security**: Disabled for development (xpack.security.enabled=false)
+- **Storage**: 5Gi persistent volume claim
+- **Port**: 9200 (HTTP API), 9300 (transport), 30020 (via NodePort)
+
+**Test Elasticsearch:**
+
+```bash
+# Via kubectl port-forward
+kubectl port-forward -n chatify svc/chatify-elastic-nodeport 9200:9200
+
+# Check cluster health
+curl http://localhost:9200/_cluster/health?pretty
+
+# List indices
+curl http://localhost:9200/_cat/indices?v
+
+# Or access via NodePort (from kind)
+curl http://localhost:9200/_cluster/health?pretty
+```
+
+#### Deploy Kibana
+
+Kibana provides a web UI for exploring and visualizing logs stored in Elasticsearch.
+
+**Deploy Kibana:**
+
+```bash
+# Deploy Kibana Deployment with services
+kubectl apply -f deploy/k8s/elastic/20-kibana.yaml
+
+# Wait for Kibana to be ready
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=chatify-kibana -n chatify --timeout=300s
+
+# Verify Kibana is running
+kubectl get pods -n chatify -l app.kubernetes.io/name=chatify-kibana
+kubectl get svc -n chatify -l app.kubernetes.io/name=chatify-kibana
+```
+
+**Kibana Configuration:**
+- **Image**: `docker.elastic.co/kibana/kibana:8.16.1`
+- **Elasticsearch Host**: `http://chatify-elastic:9200`
+- **Security**: Disabled for development
+- **Port**: 5601 (HTTP), 30561 (via NodePort)
+
+#### Access Kibana
+
+**Port Forward to Local Machine:**
+
+```bash
+# Port forward Kibana to local port 5601
+kubectl port-forward -n chatify svc/chatify-kibana-nodeport 5601:5601
+
+# Or access directly via NodePort (from kind)
+# Port mapping 5601 -> 30561 is configured in deploy/kind/kind-cluster.yaml
+```
+
+**Open Kibana in Browser:**
+
+Navigate to `http://localhost:5601` in your web browser.
+
+#### Kibana Index Pattern Setup
+
+To view Chatify logs in Kibana, you need to create an index pattern that matches the log indices.
+
+**Step 1: Navigate to Stack Management**
+
+1. Open Kibana at `http://localhost:5601`
+2. Click the ** hamburger menu** (three lines) in the top-left corner
+3. Navigate to **Stack Management** (under Kibana section)
+
+**Step 2: Create Index Pattern**
+
+1. In the left sidebar, click **Index Patterns**
+2. Click **Create index pattern**
+3. In the index pattern name field, enter: `logs-chatify-*`
+4. Click **Next step**
+
+**Step 3: Configure Time Field**
+
+1. Select `@timestamp` as the time field
+2. Click **Create index pattern**
+
+**Step 4: Verify Logs**
+
+1. Navigate to **Discover** (click the magnifying glass icon in the left sidebar)
+2. Ensure `logs-chatify-*` is selected in the dropdown at the top
+3. Select a time range (e.g., Last 15 minutes, Last 1 hour)
+4. You should see Chatify logs appearing in real-time
+
+#### Querying Logs in Kibana
+
+**Basic Queries:**
+
+```kql
+# View all error logs
+level: "Error"
+
+# View logs by correlation ID
+correlationId: "abc-123-def-456"
+
+# View logs from a specific pod
+context.OriginPodId: "chatify-chat-api-7d9f4c5b6d-abc12"
+
+# View logs for a specific scope (chat channel/scope)
+context.ScopeId: "general"
+
+# Combine filters
+level: "Error" AND context.ScopeId: "general"
+
+# Search by message content
+message: "Kafka" AND level: "Information"
+```
+
+**Using Kibana Query Language (KQL):**
+
+1. In the **Discover** view, use the search bar at the top
+2. Enter KQL queries to filter logs
+3. Use the **Add filter** button for more complex queries
+
+**Viewing Log Details:**
+
+1. Click on any log entry to expand its details
+2. View the **JSON** tab for the full structured log
+3. Examine the **context** object for application-specific properties
+
+**Common Log Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `@timestamp` | Log entry timestamp |
+| `level` | Log level (Information, Warning, Error) |
+| `message` | Log message |
+| `correlationId` | Distributed tracing correlation ID |
+| `context` | Structured context object with application-specific data |
+| `exception` | Exception details (for error logs) |
+| `MachineName` | Host/pod name |
+| `Application` | Application name (e.g., "Chatify.ChatApi") |
+
+#### Creating Kibana Visualizations and Dashboards
+
+**Create a Visualization:**
+
+1. Navigate to **Visualize Library** (Stack Management > Visualize Library)
+2. Click **Create visualization**
+3. Select a visualization type (e.g., Line, Pie, Data Table)
+4. Select the `logs-chatify-*` index pattern
+5. Configure the visualization:
+   - **Y-axis**: Count of documents
+   - **X-axis**: Terms aggregation on `level.name` (for log level distribution)
+   - **Split series**: Terms on `MachineName.keyword` (for per-pod breakdown)
+6. Save the visualization
+
+**Create a Dashboard:**
+
+1. Navigate to **Dashboard** (click the dashboard icon in the left sidebar)
+2. Click **Create dashboard**
+3. Click **Add from library** to add saved visualizations
+4. Arrange and resize widgets
+5. Save the dashboard
+
+#### Monitoring Elasticsearch Health
+
+**Check Cluster Health:**
+
+```bash
+# Via curl
+curl http://localhost:9200/_cluster/health?pretty
+
+# Via kubectl exec
+kubectl exec -n chatify statefulset/chatify-elastic -- \
+  curl -s http://localhost:9200/_cluster/health?pretty
+```
+
+**Health Status Indicators:**
+- **green**: All shards are assigned (optimal)
+- **yellow**: All shards assigned but replicas are unallocated (acceptable for single-node)
+- **red**: Some shards are unassigned (investigate immediately)
+
+**View Node and Shard Statistics:**
+
+```bash
+curl http://localhost:9200/_cat/nodes?v
+curl http://localhost:9200/_cat/indices?v
+curl http://localhost:9200/_cat/shards?v
+```
+
+**View Log Indices:**
+
+```bash
+# List all logs-chatify-* indices
+curl http://localhost:9200/_cat/indices?v | grep logs-chatify
+
+# View index mapping
+curl http://localhost:9200/logs-chatify-chatapi-2026.01.16/_mapping?pretty
+
+# Search recent logs
+curl http://localhost:9200/logs-chatify-*/_search?pretty&size=10
+```
+
+#### Production Considerations
+
+For production deployments of Elasticsearch and Kibana, consider:
+
+**Elasticsearch:**
+- **Multi-node cluster** with 3+ master-eligible nodes for high availability
+- **Dedicated master nodes** for cluster management
+- **Dedicated data nodes** for data storage and querying
+- **Dedicated coordinating nodes** for query coordination
+- **Proper heap sizing**: 50% of available RAM, max 30GB
+- **Storage**: SSD with sufficient IOPS for write-heavy workloads
+- **Security**: Enable xpack.security, use SSL/TLS for all communication
+- **Backup**: Configure snapshot repositories for regular backups
+- **Index Management**: Configure Index Lifecycle Management (ILM) policies
+- **Resource allocation**: Monitor CPU, memory, and disk usage
+
+**Kibana:**
+- **Multiple replicas** for high availability
+- **Caching**: Configure Kibana caching for improved performance
+- **Security**: Enable authentication and authorization
+- **Network policies**: Restrict access to trusted networks
+- **Resource limits**: Set appropriate CPU and memory limits
+
+**Monitoring:**
+- Use Kibana's **Monitoring** feature to monitor cluster health
+- Set up alerts for cluster health, disk usage, and query performance
+- Monitor shard distribution and rebalancing
 
 ## Appendix
 Placeholders only.

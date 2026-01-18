@@ -3,15 +3,19 @@
     <TargetFramework>net9.0</TargetFramework>
     <IsTestProject>true</IsTestProject>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Moq" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Modules/Chat/Chatify.Chat.Domain/Chatify.Chat.Domain.csproj" />
+    <ProjectReference Include="../../src/Modules/Chat/Chatify.Chat.Application/Chatify.Chat.Application.csproj" />
+    <ProjectReference Include="../../src/BuildingBlocks/Chatify.BuildingBlocks/Chatify.BuildingBlocks.csproj" />
   </ItemGroup>
 </Project>

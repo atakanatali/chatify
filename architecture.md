@@ -9,6 +9,7 @@
 - [Infrastructure](#infrastructure)
 - [Testing Strategy](#testing-strategy)
 - [Operational Considerations](#operational-considerations)
+- [Streaming Analytics (Flink)](#streaming-analytics-flink)
 - [Appendix](#appendix)
 
 ## Overview
@@ -850,15 +851,27 @@ if (rateLimitResult.IsFailure)
 - `Username` - Authentication username (optional)
 - `Password` - Authentication password (optional)
 
-**DI Extension:** `ServiceCollectionScyllaExtensions.AddScyllaChatify(IConfiguration)`
+**Schema Migration Options:** `ScyllaSchemaMigrationOptionsEntity`
+- `Keyspace` - Target keyspace for migrations (default: "chatify")
+- `ApplySchemaOnStartup` - Auto-apply migrations on startup (default: true)
+- `SchemaMigrationTableName` - Table name for migration history (default: "schema_migrations")
+- `FailFastOnSchemaError` - Stop startup if migration fails (default: true)
+
+**DI Extensions:**
+- `ServiceCollectionScyllaExtensions.AddScyllaChatify(IConfiguration)` - Core ScyllaDB services
+- `ServiceCollectionScyllaSchemaMigrationsExtensions.AddScyllaSchemaMigrationsChatify(IConfiguration)` - Schema migration services
 
 **Registered Services:**
 - `ScyllaOptionsEntity` (singleton) - Configuration options
+- `ScyllaSchemaMigrationOptionsEntity` (singleton) - Migration configuration options
 - `ICluster` (singleton) - Cassandra/ScyllaDB cluster connection
 - `ISession` (singleton) - Cassandra/ScyllaDB session to keyspace
 - `ChatHistoryRepository` (singleton) - Implements `IChatHistoryRepository`
+- `ISchemaMigrationHistoryRepository` (singleton) - Migration history tracking
+- `IScyllaSchemaMigrationService` (singleton) - Schema migration orchestration
+- `IScyllaSchemaMigration` implementations (transient) - Discovered migrations
 
-**Implementation Status:** Fully implemented with idempotent writes and pagination support.
+**Implementation Status:** Fully implemented with idempotent writes, pagination support, and code-first schema migrations.
 
 **Configuration Sections:** `Chatify:Scylla` (preferred) or `Chatify:Database` (backward compatibility)
 
@@ -869,11 +882,124 @@ if (rateLimitResult.IsFailure)
       "ContactPoints": "scylla-node1:9042,scylla-node2:9042,scylla-node3:9042",
       "Keyspace": "chatify",
       "Username": "chatify_user",
-      "Password": "secure_password"
+      "Password": "secure_password",
+      "ApplySchemaOnStartup": true,
+      "SchemaMigrationTableName": "schema_migrations",
+      "FailFastOnSchemaError": true
     }
   }
 }
 ```
+
+**Schema Migration System:**
+
+Chatify implements a **code-first schema migration system** for ScyllaDB. Migrations are implemented as C# classes that execute CQL statements during application startup, providing compile-time safety and testability.
+
+**Migration Architecture:**
+- Each module owns migrations in `Migrations/` within its Infrastructure project
+- Migrations implement `IScyllaSchemaMigration` interface
+- Applied migrations are tracked in `schema_migrations` table with a **composite primary key**
+- Migrations are discovered automatically via assembly scanning
+- Already-applied migrations are skipped based on history table lookup
+
+**Composite Migration Key:**
+Migrations are uniquely identified by the combination of `ModuleName` and `MigrationId`. This allows different modules to have migrations with the same migration ID without conflicts. For example:
+- `Chat` module can have migration `0001_init_chat`
+- `Users` module can also have migration `0001_init_users`
+
+Both can coexist because the migration history table uses a composite primary key: `(module_name, migration_id)`.
+
+**Migration Flow:**
+1. Application starts
+2. Migration service ensures `schema_migrations` table exists (creates if needed)
+3. Migration service discovers all `IScyllaSchemaMigration` implementations via DI
+4. Service queries `schema_migrations` table for applied migrations
+5. Pending migrations (not in history) are filtered and sorted by `(ModuleName, MigrationId)`
+6. Each pending migration is applied in order
+7. Successfully applied migrations are recorded in history table with `(module_name, migration_id)` key
+8. Application proceeds to handle requests
+
+**Existing Chat Module Migration:**
+
+The Chat module includes an initial migration that creates the keyspace and chat_messages table:
+
+```csharp
+public sealed class InitChatMigration : IScyllaSchemaMigration
+{
+    public string ModuleName => "Chat";
+    public string MigrationId => "0001_init_chat";
+
+    public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+    {
+        // Creates keyspace and chat_messages table
+        // See: src/Modules/Chat/Chatify.Chat.Infrastructure/Migrations/Chat/InitChatMigration.cs
+    }
+}
+```
+
+**Creating Additional Migrations:**
+
+To add new migrations to the Chat module:
+
+```csharp
+public sealed class V0002_AddMessageIndex : IScyllaSchemaMigration
+{
+    public string ModuleName => "Chat";
+    public string MigrationId => "0002_add_message_index";
+
+    public Task ApplyAsync(ISession session, CancellationToken cancellationToken)
+    {
+        var cql = "CREATE INDEX IF NOT EXISTS ON chatify.chat_messages (sender_id);";
+        return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
+    }
+
+    public Task RollbackAsync(ISession session, CancellationToken cancellationToken)
+    {
+        var cql = "DROP INDEX IF EXISTS chatify.chat_messages_sender_id_idx;";
+        return session.ExecuteAsync(new SimpleStatement(cql), cancellationToken);
+    }
+}
+```
+
+**Migration History Table Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    module_name text,
+    migration_id text,
+    applied_at_utc timestamp,
+    PRIMARY KEY ((module_name, migration_id))
+);
+```
+
+**How Migration Skipping Works:**
+1. On startup, the migration service queries all rows from `schema_migrations`
+2. Each row represents a previously applied migration with its `(module_name, migration_id)` key
+3. The service builds a set of applied keys: `{("Chat", "0001_init_chat"), ...}`
+4. Discovered migrations are checked against this set using the composite key
+5. Migrations whose `(ModuleName, MigrationId)` is in the applied set are skipped
+6. Only migrations not found in the history table are executed
+
+**Example Migration History Table State:**
+```
+| module_name                      | migration_id                   | applied_at_utc          |
+|----------------------------------|--------------------------------|-------------------------|
+| Chat                             | 0001_init_chat                 | 2026-01-15 10:00:00Z    |
+| Chat                             | 0002_add_message_index         | 2026-01-15 10:00:01Z    |
+| Users                            | 0001_init_users                | 2026-01-15 10:00:02Z    |
+```
+
+On subsequent startup:
+- `0001_init_chat` for `Chat` → SKIPPED (already applied)
+- `0001_init_users` for `Users` → SKIPPED (already applied)
+- `0002_add_message_index` for `Chat` → APPLIED (new migration)
+
+**Best Practices:**
+1. Use `IF NOT EXISTS` clauses for idempotency
+2. One schema change per migration
+3. Name with version prefix: `V001_`, `V002_`, etc.
+4. Test migrations in development before production
+5. Never modify applied migrations - create new ones instead
+6. Use consistent `ModuleName` values (typically the assembly name)
 
 **Keyspace Creation:**
 ```sql
@@ -1727,4 +1853,248 @@ Response: X-Correlation-ID: corr_a1b2c3d4-e5f6-7890-abcd-ef1234567890
 | `SendChatMessageCommandHandler` | Application layer | Orchestrate message processing |
 | `IPodIdentityService` | Infrastructure | Provide pod identity |
 | `ICorrelationContextAccessor` | BuildingBlocks | Async-local correlation storage |
+
+---
+
+## Streaming Analytics (Flink)
+
+### Overview
+Chatify includes an Apache Flink streaming job for real-time analytics and rate limiting. The Flink job consumes chat events from Kafka, performs windowed aggregations, and produces derived events to downstream topics.
+
+### Location
+- **Source Code:** `src/Tools/FlinkJobs/`
+- **Main Class:** `com.chatify.flink.processor.ChatEventProcessorJob`
+- **Language:** Java 11
+- **Build:** Maven
+
+### Processing Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Flink Streaming Analytics Pipeline                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  KAFKA SOURCE                                                               │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │  Topic: chat-events                                            │    │
+│     │  Partitions: 3                                                 │    │
+│     │  Format: JSON (ChatEventDto)                                   │    │
+│     │  Consumer Group: chatify-flink-processor                       │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │              ChatEventProcessorJob (Flink)                          │   │
+│  │  ─────────────────────────────────────────────────────────────────  │   │
+│  │                                                                     │   │
+│  │  1. Assign Timestamps & Watermarks                                 │   │
+│  │     └─ Event time: createdAtUtc                                   │   │
+│  │     └─ Out-of-orderness: 5 seconds                                │   │
+│  │     └─ Idle partitions: 60 seconds                                │   │
+│  │                                                                     │   │
+│  │  2. [FORK] Split processing pipeline                               │   │
+│  │                                                                     │   │
+│  │     ├─ BRANCH A: Analytics Aggregation                             │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Key by: compositeScopeId (scopeType:scopeId)            │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Window: Tumbling, 60 seconds                            │   │
+│  │     │   │                                                           │   │
+│  │     │   ├─ Aggregate:                                              │   │
+│  │     │   │   ├─ Message count                                       │   │
+│  │     │   │   ├─ Unique user count                                   │   │
+│  │     │   │   ├─ Total character count                              │   │
+│  │     │   │   └─ Average message length                              │   │
+│  │     │   │                                                           │   │
+│  │     │   └─ Output: AnalyticsEventEntity                            │   │
+│  │     │                                                                 │   │
+│  │     └─ BRANCH B: Rate Limit Detection                              │   │
+│  │         │                                                           │   │
+│  │         ├─ Key by: senderId (userId)                               │   │
+│  │         │                                                           │   │
+│  │         ├─ Window: Sliding, 60 seconds (slide every 10s)           │   │
+│  │         │                                                           │   │
+│  │         ├─ Aggregate:                                              │   │
+│  │         │   ├─ Message count per user                             │   │
+│  │         │   └─ Track scopes posted in                             │   │
+│  │         │                                                           │   │
+│  │         ├─ Check thresholds:                                       │   │
+│  │         │   ├─ Flag: 200 messages/window                           │   │
+│  │         │   ├─ Throttle: 100 messages/window                       │   │
+│  │         │   └─ Warning: 80 messages/window                         │   │
+│  │         │                                                           │   │
+│  │         └─ Output: RateLimitEventEntity (when threshold exceeded)  │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                              │                                              │
+│                              ▼                                              │
+│  KAFKA SINKS                                                                │
+│     ┌─────────────────────────────────────────────────────────────────┐    │
+│     │                                                                  │    │
+│     │  ┌─────────────────────┐    ┌────────────────────────────────┐ │    │
+│     │  │ analytics-events    │    │ rate-limit-events               │ │    │
+│     │  │                     │    │                                 │ │    │
+│     │  │ Partitions: 3       │    │ Partitions: 3                   │ │    │
+│     │  │ Key: scopeId        │    │ Key: userId                     │ │    │
+│     │  │ Value: JSON         │    │ Value: JSON                     │ │    │
+│     │  │                     │    │                                 │ │    │
+│     │  │ Consumers:          │    │ Consumers:                      │ │    │
+│     │  │ - Dashboards        │    │ - Enforcement service           │ │    │
+│     │  │ - Monitoring        │    │ - Alerting                      │ │    │
+│     │  │ - BI Tools          │    │ - ML models                     │ │    │
+│     │  └─────────────────────┘    └────────────────────────────────┘ │    │
+│     │                                                                  │    │
+│     └─────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  Key Characteristics:                                                      │
+│  - Exactly-once processing semantics with checkpointing                    │
+│  - Event-time processing with watermarks for out-of-order events           │
+│  - Parallel processing with configurable parallelism                       │
+│  - Stateful aggregations with fault-tolerant state backend                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Derived Topics
+
+#### analytics-events
+Aggregated statistics about chat activity per scope, produced at regular intervals (e.g., every 60 seconds).
+
+**Schema:** `AnalyticsEventEntity`
+```json
+{
+  "analyticsId": "uuid",
+  "scopeType": "Channel|DirectMessage",
+  "scopeId": "general",
+  "windowStartUtc": "2026-01-15T10:30:00Z",
+  "windowEndUtc": "2026-01-15T10:31:00Z",
+  "windowDurationSeconds": 60,
+  "messageCount": 150,
+  "activeUserCount": 25,
+  "uniqueSenderCount": 25,
+  "totalCharacterCount": 4500,
+  "averageMessageLength": 30.0,
+  "computedAtUtc": "2026-01-15T10:31:05Z",
+  "computeTaskId": "chatify-flink-processor"
+}
+```
+
+**Consumers:**
+- Real-time dashboards (Grafana, Kibana)
+- Monitoring systems (Prometheus)
+- Business intelligence tools
+- Capacity planning services
+
+**Partitioning:** By `scopeId` to ensure all analytics for a scope are ordered.
+
+#### rate-limit-events
+Notifications when users exceed configured rate limits, produced immediately upon detection.
+
+**Schema:** `RateLimitEventEntity`
+```json
+{
+  "rateLimitEventId": "uuid",
+  "eventType": "Warning|Throttle|Flag",
+  "userId": "user-123",
+  "scopeType": "Channel|DirectMessage",
+  "scopeId": "general",
+  "windowStartUtc": "2026-01-15T10:30:00Z",
+  "windowEndUtc": "2026-01-15T10:31:00Z",
+  "windowDurationSeconds": 60,
+  "messageCount": 105,
+  "threshold": 100,
+  "excessCount": 5,
+  "messagesPerSecond": 1.75,
+  "detectedAtUtc": "2026-01-15T10:31:05Z",
+  "detectorTaskId": "chatify-flink-processor",
+  "context": "User exceeded throttle threshold"
+}
+```
+
+**Event Types:**
+- `Warning` (80 messages/window): User is approaching limits, may want to slow down
+- `Throttle` (100 messages/window): User should be temporarily restricted
+- `Flag` (200 messages/window): Potential abuse, requires admin review
+
+**Consumers:**
+- Rate limit enforcement service
+- Alerting systems (PagerDuty, Slack)
+- Abuse detection ML models
+- Admin review queue
+
+**Partitioning:** By `userId` to ensure all rate limit events for a user are ordered.
+
+### Checkpointing & State Management
+
+The Flink job uses checkpointing for exactly-once processing guarantees:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Interval | 60s | Time between checkpoints |
+| Min Pause | 30s | Minimum time between checkpoints |
+| Timeout | 10m | Maximum time for checkpoint completion |
+| Max Concurrent | 1 | Maximum concurrent checkpoints |
+
+**State Backend:** Currently uses JobManager memory (TODO: Configure RocksDB for production).
+
+### Configuration
+
+All configuration is via environment variables:
+
+```bash
+# Kafka Connection
+KAFKA_BOOTSTRAP_SERVERS=chatify-kafka:9092
+KAFKA_CONSUMER_GROUP_ID=chatify-flink-processor
+
+# Topics
+KAFKA_SOURCE_TOPIC=chat-events
+KAFKA_ANALYTICS_TOPIC=analytics-events
+KAFKA_RATE_LIMIT_TOPIC=rate-limit-events
+
+# Checkpointing
+CHECKPOINT_INTERVAL_MS=60000
+CHECKPOINT_MIN_PAUSE_MS=30000
+CHECKPOINT_TIMEOUT_MS=600000
+
+# Analytics
+ANALYTICS_WINDOW_SIZE_SECONDS=60
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_SIZE_SECONDS=60
+RATE_LIMIT_WARNING_THRESHOLD=80
+RATE_LIMIT_THROTTLE_THRESHOLD=100
+RATE_LIMIT_FLAG_THRESHOLD=200
+
+# Job
+JOB_PARALLELISM=2
+```
+
+### Deployment
+
+#### Build
+```bash
+cd src/Tools/FlinkJobs
+mvn clean package
+```
+
+#### Submit to Kubernetes
+See `deploy/k8s/flink/30-flink-job.yaml` for the job submission manifest.
+
+### Integration with Chatify Architecture
+
+The Flink job integrates with the existing Chatify architecture as a downstream consumer:
+
+1. **No Upstream Changes Required:** The job reads from the existing `chat-events` topic
+2. **No Coupling:** The C# layer is unaware of Flink; analytics are purely additive
+3. **Decoupled Consumers:** Analytics and history writers consume independently
+4. **Schema Evolution:** New fields in ChatEventDto are ignored by Flink (forward compatible)
+
+### Future Enhancements
+
+- **External State Backend:** Configure RocksDB with HDFS/S3 checkpoint storage
+- **Dead Letter Queue:** Route failed events to DLQ for analysis
+- **Metrics:** Expose Flink metrics for Prometheus
+- **Dynamic Thresholds:** Update rate limits via config topic
+- **Advanced Analytics:** Word frequency, sentiment, emoji detection
+- **Backfill Mode:** Batch processing for historical data
 
