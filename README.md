@@ -16,8 +16,69 @@
 ## Overview
 Chatify is a modular monolith built with Clean Architecture and SOLID principles. The project provides a real-time chat API with SignalR hubs, comprehensive middleware for cross-cutting concerns, and a layered architecture that separates domain logic from infrastructure implementation.
 
-## Architecture
-See [architecture.md](architecture.md) for the architectural overview and module responsibilities.
+## Core Architecture
+
+```mermaid
+graph TB
+ subgraph Client [Client Layer]
+  User[User / App] -->|Connects| Hub[SignalR Hub]
+  User -->|Sends Message| Hub
+ end
+
+ subgraph Host [API Host]
+  Hub -->|Invokes| Handler[Command Handler]
+ end
+
+ subgraph Core [Chat Application Core]
+  Handler -->|Validates| Policy{Domain Policy}
+  Policy -->|Pass| RateLimit[Rate Limiter]
+  RateLimit -->|Pass| Factory[Event Factory]
+  Factory -->|Creates| Event[ChatEvent]
+  Event -->|Produces| Producer[Kafka Producer]
+ end
+
+ subgraph Infra [Infrastructure]
+  Producer -->|Publishes| Kafka[Kafka Topic: chat-events]
+  Kafka -->|Consumes| Broadcaster[Broadcast Service]
+  Kafka -->|Consumes| History[History Writer]
+  Kafka -->|Consumes| Flink[Flink Analytics]
+  History -->|Persists| Scylla[ScyllaDB]
+  Broadcaster -->|Fan-out| Hub
+  Flink -->|Aggregates| Analytics[Analytics Events]
+  Flink -->|Detects| RateLimitEvents[Rate Limit Events]
+ end
+
+ style Client fill:#f9f9f9,stroke:#333,stroke-width:2px
+ style Host fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+ style Core fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+ style Infra fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+ style Flink fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+
+```
+
+### Package Structure
+
+```
+Chatify.BuildingBlocks
+```
+
+```
+Chatify.Chat.Domain
+```
+
+```
+Chatify.Chat.Application
+```
+
+```
+Chatify.Chat.Infrastructure
+```
+
+```
+Chatify.ChatApi
+```
+
+See [architecture.md](architecture.md) for the detailed architectural overview and module responsibilities.
 
 ### Solution Structure & Module Boundaries
 Chatify is organized around a modular monolith layout with a dedicated host, a shared kernel, and a chat module that follows Clean Architecture layering. The solution is anchored by `Chatify.sln` with the following structure:

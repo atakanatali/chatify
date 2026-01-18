@@ -466,6 +466,7 @@ public class SendChatMessageCommandHandlerTests
 
         // Assert
         Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value);
         Assert.Equal(ChatScopeTypeEnum.DirectMessage, result.Value.ChatEvent.ScopeType);
         Assert.Equal("conv-user123-user456", result.Value.ChatEvent.ScopeId);
         Assert.Equal("Private message", result.Value.ChatEvent.Text);
@@ -524,6 +525,7 @@ public class SendChatMessageCommandHandlerTests
 
         // Assert
         Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Value);
         Assert.Equal(string.Empty, result.Value.ChatEvent.Text);
     }
 

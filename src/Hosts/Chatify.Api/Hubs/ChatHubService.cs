@@ -1,3 +1,4 @@
+using Chatify.Api.Extensions;
 using Chatify.Chat.Application.Commands.SendChatMessage;
 using Chatify.Chat.Application.Dtos;
 using Chatify.Chat.Application.Ports;
@@ -317,12 +318,7 @@ public sealed class ChatHubService : Hub
             connectionId,
             request.ScopeId);
 
-        // TODO: Extract sender ID from authentication context
-        // In production, this would come from JWT claims or session data
-        // For now, use connection ID as a placeholder
-        var senderId = Context.User?.FindFirst("sub")?.Value
-            ?? Context.User?.FindFirst("user_id")?.Value
-            ?? $"anon_{connectionId}";
+        var senderId = Context.GetUserId();
 
         var command = new SendChatMessageCommand
         {
@@ -410,10 +406,8 @@ public sealed class ChatHubService : Hub
     public override async Task OnConnectedAsync()
     {
         var connectionId = Context.ConnectionId;
-        var userId = Context.User?.FindFirst("sub")?.Value
-            ?? Context.User?.FindFirst("user_id")?.Value
-            ?? $"anon_{connectionId}";
-        var user = Context.User?.Identity?.Name ?? "anonymous";
+        var userId = Context.GetUserId();
+        var user = Context.GetUserName();
 
         _logger.LogInformation(
             "Client connected. ConnectionId: {ConnectionId}, UserId: {UserId}, User: {User}",
@@ -482,10 +476,8 @@ public sealed class ChatHubService : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var connectionId = Context.ConnectionId;
-        var userId = Context.User?.FindFirst("sub")?.Value
-            ?? Context.User?.FindFirst("user_id")?.Value
-            ?? $"anon_{connectionId}";
-        var user = Context.User?.Identity?.Name ?? "anonymous";
+        var userId = Context.GetUserId();
+        var user = Context.GetUserName();
 
         if (exception is not null)
         {
