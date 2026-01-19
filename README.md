@@ -14,7 +14,26 @@
 - [Appendix](#appendix)
 
 ## Overview
-Chatify is a modular monolith built with Clean Architecture and SOLID principles. The project provides a real-time chat API with SignalR hubs, comprehensive middleware for cross-cutting concerns, and a layered architecture that separates domain logic from infrastructure implementation.
+Chatify is a **distributed, real-time chat platform** built as a modular monolith with **Clean Architecture** and **SOLID** principles. Designed for horizontal scalability and strict message ordering, it demonstrates enterprise-grade patterns for event-driven communication systems.
+
+### Technology Stack
+| Category | Technology | Purpose |
+|---|---|---|
+| **Runtime** | .NET 9.0 | Application runtime |
+| **Real-time** | SignalR (WebSockets) | Bi-directional client communication |
+| **Message Broker** | Apache Kafka (Redpanda) | Persistent, ordered event streaming |
+| **Database** | ScyllaDB (Cassandra-compatible) | High-throughput chat history persistence |
+| **Caching** | Redis | Presence tracking, rate limiting, distributed coordination |
+| **Stream Processing** | Apache Flink | Real-time analytics and rate-limit event detection |
+| **Observability** | Elasticsearch + Kibana + Serilog | Centralized logging, structured queries |
+| **Orchestration** | Kubernetes (Kind for local) | Container orchestration with 3 API replicas |
+
+### Architectural Patterns
+- **Event-Driven Architecture**: All messages flow through Kafka, enabling replay, fan-out, and decoupled consumers.
+- **Fan-Out Consumption**: Each API pod has a unique Kafka consumer group, ensuring all pods receive all messages for local SignalR broadcast.
+- **Shared Consumer Groups**: History writers share a single group, distributing persistence workload across pods.
+- **At-Least-Once Delivery**: Manual offset commits with idempotent database writes guarantee no message loss.
+- **Strict Ordering per Scope**: Messages are keyed by `ScopeId` (chat room), ensuring ordered delivery within each conversation.
 
 ## Core Architecture
 
