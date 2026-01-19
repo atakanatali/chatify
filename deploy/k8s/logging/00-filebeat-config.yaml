@@ -18,6 +18,10 @@ data:
             matchers:
             - logs_path:
                 logs_path: "/var/log/containers/"
+        - drop_event:
+            when:
+               equals:
+                   log_type: "duplicate_to_drop"
         # Enrich logs with podId and appName fields 
         - script:
             lang: javascript
@@ -25,19 +29,62 @@ data:
             source: >
               function process(event) {
                   var podName = event.Get("kubernetes.pod.name");
-                  var appLabel = event.Get("kubernetes.labels.app_kubernetes_io_name");
                   var containerName = event.Get("kubernetes.container.name");
+                  var labels = event.Get("kubernetes.labels");
                   
                   // Map podId
                   if (podName) {
                       event.Put("podId", podName);
                   }
                   
-                  // Map appName (prefer label, fallback to container name)
+                  var appLabel = "";
+                  var componentLabel = "";
+
+                  if (labels) {
+                      // Handle potential key variations (dots to underscores, slashes preserved or not)
+                      // Common: app_kubernetes_io/name or app_kubernetes_io_name
+                      appLabel = labels["app_kubernetes_io/name"] || labels["app_kubernetes_io_name"] || labels["app.kubernetes.io/name"];
+                      componentLabel = labels["app_kubernetes_io/component"] || labels["app_kubernetes_io_component"] || labels["app.kubernetes.io/component"];
+                  }
+
+                  // Map appName
                   if (appLabel) {
                       event.Put("appName", appLabel);
                   } else if (containerName) {
                       event.Put("appName", containerName);
+                  }
+
+                  // Determine Log Type (App vs System)
+                  var appComponents = ["api", "consumer", "worker", "frontend"];
+                  var isApp = false;
+
+                  if (componentLabel && appComponents.indexOf(componentLabel) !== -1) {
+                      isApp = true;
+                  }
+                  
+                  // Fallback: Check container name
+                  if (!isApp && containerName) {
+                      // EXCLUDE chat-api from Filebeat because it ships logs directly to Elastic via Serilog Sink.
+                      // This prevents duplicate and "messy" logs (one text, one structured).
+                      if (containerName.indexOf("chat-api") !== -1) {
+                          // Drop event by not marking as app, and we can drop 'system' too if we want,
+                          // but usually 'drop_event' processor is better.
+                          // Here we will tag it as 'duplicate_api' so we can drop it in config.
+                          event.Put("log_type", "duplicate_to_drop");
+                          return;
+                      }
+
+                      if (containerName.indexOf("consumer") !== -1 ||
+                          containerName.indexOf("worker") !== -1 ||
+                          containerName.indexOf("frontend") !== -1) {
+                          isApp = true;
+                      }
+                  }
+
+                  if (isApp) {
+                      event.Put("log_type", "app");
+                  } else {
+                      event.Put("log_type", "system");
                   }
               }
 
@@ -46,6 +93,13 @@ data:
 
     output.elasticsearch:
       hosts: ['${ELASTICSEARCH_HOST:chatify-elastic}:${ELASTICSEARCH_PORT:9200}']
+      indices:
+        - index: "logs-chatify-%{+yyyy.MM.dd}"
+          when.equals:
+            log_type: "app"
+        - index: "system-logs-chatify-%{+yyyy.MM.dd}"
+          when.equals:
+            log_type: "system"
       # No authentication for internal cluster
 
     setup.kibana:

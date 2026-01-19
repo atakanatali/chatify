@@ -245,6 +245,9 @@ public sealed class ChatHistoryWriterBackgroundService : BackgroundService
     /// </remarks>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Ensure we yield to the caller immediately so startup isn't blocked
+        await Task.Yield();
+
         _logger.LogInformation(
             "ChatHistoryWriterBackgroundService starting. ConsumerGroupId: {ConsumerGroupId}, Topic: {TopicName}, Options: {Options}",
             _options.ConsumerGroupId,

@@ -113,6 +113,9 @@ public sealed class ScyllaSchemaMigrationBackgroundService : BackgroundService
     /// </remarks>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Ensure we yield to the caller immediately so startup isn't blocked
+        await Task.Yield();
+
         if (!_options.ApplySchemaOnStartup)
         {
             _logger.LogInformation(

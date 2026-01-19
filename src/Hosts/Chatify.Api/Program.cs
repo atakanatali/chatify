@@ -10,6 +10,7 @@ using Chatify.Chat.Infrastructure.Migrations;
 using Chatify.Chat.Infrastructure.Services.PodIdentity;
 using Chatify.Chat.Infrastructure.Services.RateLimit;
 using Microsoft.Extensions.Logging;
+using Serilog;
 
 namespace Chatify.Api;
 
@@ -126,6 +127,7 @@ public class Program
         // ASP.NET Core Services
         builder.Services.AddControllers();
         builder.Services.AddSignalR();
+        builder.Services.AddHealthChecks(); // Check dependencies added by other modules automatically
 
         var app = builder.Build();
 
@@ -144,8 +146,38 @@ public class Program
         app.UseAuthorization();
 
         app.MapControllers();
-        app.MapHub<ChatHubService>("/hubs/chat");
+        app.MapHub<Chatify.Api.Hubs.ChatHubService>("/hubs/chat");
 
-        app.Run();
+        // Health Checks
+        app.MapHealthChecks("/health/startup", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = _ => false // Basic app responsiveness
+        });
+
+        app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = _ => false // Basic liveness
+        });
+
+        app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            Predicate = _ => true // Check all dependencies (Scylla, Redis, Kafka)
+        });
+
+        try
+        {
+            Log.Information("Starting Chatify API Application...");
+            Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
+
+            app.Run();
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Application terminated unexpectedly");
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
     }
 }

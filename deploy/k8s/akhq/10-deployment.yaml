@@ -18,11 +18,8 @@ data:
     akhq:
       connections:
         chatify-kafka:
-          type: kafka
           properties:
             bootstrap.servers: chatify-kafka:9092
-          schema-registry:
-            type: memory
 ---
 apiVersion: v1
 kind: Service
