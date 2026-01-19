@@ -1,8 +1,11 @@
 # Chatify
 
-<img width="512" height="512" alt="Image" src="https://github.com/user-attachments/assets/b4c51e77-f31d-42bf-a940-7633ea83c907" />
+<p align="center">
+  <img width="456" height="456" alt="Cachify Logo" src="https://github.com/user-attachments/assets/d3838419-83f7-4bce-80bb-bf253a38b16d" />
+</p>
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Request Flow](#request-flow)
