@@ -13,7 +13,14 @@
 - [Appendix](#appendix)
 
 ## Overview
-Chatify follows a modular monolith architecture with Clean Architecture boundaries and SOLID principles. This document will be expanded as modules and services are implemented.
+Chatify follows a **modular monolith** architecture with **Clean Architecture** boundaries and **SOLID** principles. The system is designed as an **Event-Driven Architecture (EDA)** where all chat messages are treated as immutable events flowing through a persistent log (Kafka/Redpanda).
+
+### Key Architectural Decisions
+1. **Event Sourcing-Lite**: Messages are produced to Kafka first, then consumed by multiple downstream services (Broadcast, History Writer, Flink Analytics). This provides replay capability and decouples producers from consumers.
+2. **Fan-Out vs. Shared Consumer Groups**: Broadcasting uses unique consumer groups per pod (fan-out), while persistence uses a shared group (load distribution).
+3. **Strict Scope-Based Ordering**: Message keys are set to `ScopeId`, ensuring all messages in a chat room are delivered in order across the distributed system.
+4. **Idempotent Persistence**: ScyllaDB writes use `IF NOT EXISTS` lightweight transactions to handle at-least-once delivery without duplicates.
+5. **Serilog + Elasticsearch**: All logs (including structured exception data) are shipped to Elasticsearch for centralized observability.
 
 ## Solution Structure
 The Chatify solution is defined in `Chatify.sln` and follows a modular monolith layout:
