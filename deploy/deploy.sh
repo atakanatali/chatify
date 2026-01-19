@@ -20,6 +20,20 @@ kubectl apply -f deploy/k8s/elastic/30-kibana-init-job.yaml
 echo "   - Kafka..."
 kubectl apply -f deploy/k8s/kafka/
 
+# Wait for Kafka to be ready and create topic
+echo "⏳ Waiting for Kafka to be ready..."
+kubectl wait --for=condition=Ready pod/chatify-kafka-0 -n chatify --timeout=120s || true
+echo "📦 Creating 'chat-events' topic..."
+# We use a loop or just a direct attempt. If it fails (pod not fully ready), we retry.
+for i in {1..5}; do
+    if kubectl exec -n chatify chatify-kafka-0 -- rpk topic create chat-events -p 3 -r 1; then
+        echo "✅ Topic 'chat-events' created."
+        break
+    fi
+    echo "   Retrying topic creation in 5s..."
+    sleep 5
+done
+
 # 2.5 Logging
 echo "🪵 Deploying Logging (Filebeat)..."
 kubectl apply -f deploy/k8s/logging/

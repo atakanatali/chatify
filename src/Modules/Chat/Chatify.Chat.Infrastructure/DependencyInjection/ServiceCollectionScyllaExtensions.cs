@@ -222,28 +222,44 @@ public static class ServiceCollectionScyllaExtensions
         GuardUtility.NotNull(options);
 
         // Parse contact points from the comma-separated list
-        var contactPoints = options.ContactPoints
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(cp =>
-            {
-                // If no port specified, use default ScyllaDB port (9042)
-                if (!cp.Contains(':'))
-                {
-                    return $"{cp}:9042";
-                }
-                return cp;
-            })
-            .ToArray();
+        var rawContactPoints = options.ContactPoints
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        if (contactPoints.Length == 0)
+        if (rawContactPoints.Length == 0)
         {
             throw new InvalidOperationException(
                 "No valid contact points found in ScyllaDB configuration.");
         }
 
+        // Determine port from the first contact point or default to 9042
+        // ScyllaDB/Cassandra typically uses the same port for all nodes
+        int port = 9042;
+        var firstPoint = rawContactPoints[0];
+        if (firstPoint.Contains(':'))
+        {
+            var parts = firstPoint.Split(':');
+            if (parts.Length > 1 && int.TryParse(parts[1], out var parsedPort))
+            {
+                port = parsedPort;
+            }
+        }
+
+        // Extract hosts (strip ports)
+        var contactPoints = rawContactPoints
+            .Select(cp =>
+            {
+                if (cp.Contains(':'))
+                {
+                    return cp.Split(':')[0];
+                }
+                return cp;
+            })
+            .ToArray();
+
         // Build the cluster
         var builder = Cluster.Builder()
             .AddContactPoints(contactPoints)
+            .WithPort(port)
             .WithDefaultKeyspace(options.Keyspace);
 
         // Configure authentication if username and password are provided
@@ -318,7 +334,7 @@ public static class ServiceCollectionScyllaExtensions
 
         // Connect to the system keyspace to execute DDL
         // This avoids issues when the target keyspace doesn't exist yet
-        using var session = cluster.Connect();
+        using var session = cluster.Connect("system");
 
         // Create keyspace with SimpleStrategy for development/kind deployments
         // Production should use NetworkTopologyStrategy with higher replication factor

@@ -22,6 +22,9 @@ data:
     jobmanager.rpc.port: 6123
     jobmanager.memory.process.size: 1024m
     jobmanager.execution.failover-strategy: region
+    # Increased frame size to prevent TooLongFrameException
+    akka.framesize: 50m
+    rest.server.max-content-length: 104857600
     taskmanager.memory.process.size: 1024m
     taskmanager.numberOfTaskSlots: 3
     taskmanager.rpc.port: 6122

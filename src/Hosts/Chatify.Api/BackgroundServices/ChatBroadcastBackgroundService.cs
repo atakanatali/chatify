@@ -284,6 +284,9 @@ public sealed class ChatBroadcastBackgroundService : BackgroundService
             _options.BroadcastConsumerGroupPrefix,
             _podIdentityService.PodId);
 
+        // Ensure we yield to the caller immediately so startup isn't blocked
+        await Task.Yield();
+
         _logger.LogInformation(
             "ChatBroadcastBackgroundService starting. ConsumerGroupId: {ConsumerGroupId}, Topic: {TopicName}, BootstrapServers: {BootstrapServers}",
             consumerGroupId,

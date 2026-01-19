@@ -58,3 +58,4 @@ nunit-*.xml
 .vscode/
 *.swp
 *.user
+node_modules/

@@ -342,11 +342,11 @@ public sealed class ChatHubService : Hub
                     chatEvent.MessageId,
                     senderId,
                     request.ScopeId);
-
-                // Broadcast the message to all clients in the scope
-                await Clients.Group(request.ScopeId).SendAsync(
-                    "ReceiveMessage",
-                    chatEvent);
+                
+                // Note: We do NOT broadcast here directly anymore.
+                // The event is produced to Kafka, and the ChatBroadcastBackgroundService
+                // consumes it and broadcasts it to all pods (including this one).
+                // This ensures consistency and prevents double delivery.
             }
             else
             {

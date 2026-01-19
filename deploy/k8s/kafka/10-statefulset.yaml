@@ -103,6 +103,8 @@ spec:
             - redpanda.enable_transactions=true
             - --set
             - redpanda.default_topic_partitions=3
+            - --advertise-kafka-addr
+            - chatify-kafka-0.chatify-kafka.chatify.svc.cluster.local:9092
           resources:
             limits:
               cpu: "1000m"

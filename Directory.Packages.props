@@ -25,6 +25,8 @@
     <PackageVersion Include="Serilog.Enrichers.Thread" Version="3.1.0" />
     <!-- Enrich logs with trace/span identifiers when available. -->
     <PackageVersion Include="Serilog.Enrichers.Span" Version="3.1.0" />
+    <PackageVersion Include="Serilog.Settings.Configuration" Version="8.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Elasticsearch" Version="10.0.0" />
     <!-- Elasticsearch sink for centralized log shipping. -->
     <PackageVersion Include="Elastic.Serilog.Sinks" Version="9.0.0" />
     <!-- Kafka client for event streaming and messaging. -->
